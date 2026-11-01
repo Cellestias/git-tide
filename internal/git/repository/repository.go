@@ -366,3 +366,43 @@ func (r *Repository) PushBranch(ctx context.Context, remote, name string) error 
 	_, err := r.git(ctx, "push", "--set-upstream", "--", remote, "refs/heads/"+name+":refs/heads/"+name)
 	return err
 }
+
+// CommitExists reports whether rev (a branch, tag, remote-tracking ref, or hash)
+// resolves to a commit.
+func (r *Repository) CommitExists(ctx context.Context, rev string) (bool, error) {
+	return r.refExists(ctx, rev)
+}
+
+// RemoteHasBranch asks the remote (over the network) whether refs/heads/name exists.
+func (r *Repository) RemoteHasBranch(ctx context.Context, remote, name string) (bool, error) {
+	if err := branch.ValidName(name); err != nil {
+		return false, err
+	}
+	_, err := r.git(ctx, "ls-remote", "--exit-code", "--heads", "--", remote, "refs/heads/"+name)
+	if err == nil {
+		return true, nil
+	}
+	if executor.ExitCode(err) == 2 { // --exit-code: no matching refs
+		return false, nil
+	}
+	return false, err
+}
+
+// CreateBranch creates branch name at start. Without track the new branch has
+// no upstream, even when start is a remote-tracking ref. With checkout the
+// work tree switches to it.
+func (r *Repository) CreateBranch(ctx context.Context, name, start string, track, checkout bool) error {
+	if err := branch.ValidName(name); err != nil {
+		return err
+	}
+	trackFlag := "--no-track"
+	if track {
+		trackFlag = "--track"
+	}
+	if checkout {
+		_, err := r.git(ctx, "switch", trackFlag, "-c", name, start)
+		return err
+	}
+	_, err := r.git(ctx, "branch", trackFlag, name, start)
+	return err
+}
