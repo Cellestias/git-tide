@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/cellestias/git-tide/internal/app/create"
 	"github.com/cellestias/git-tide/internal/app/doctor"
 	apphooks "github.com/cellestias/git-tide/internal/app/hooks"
 	"github.com/cellestias/git-tide/internal/app/initrepo"
@@ -96,6 +97,36 @@ func (e *env) reviewCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&opts.Reset, "reset", false, "discard local commits on an existing review branch")
+	return cmd
+}
+
+func (e *env) createCmd() *cobra.Command {
+	var opts create.Options
+	cmd := &cobra.Command{
+		Use:   "create <branch>",
+		Short: "Create a branch from an up-to-date base",
+		Long: "Create <branch> from the freshly fetched base branch (resolved from .tide.yml, or --from) and switch to it.\n" +
+			"The new branch has no upstream unless you use --track or --push.",
+		Example: "  tide create feature/two-fa                  # from the configured base, fetched first\n" +
+			"  tide create feature/two-fa --from release/1  # from another branch, tag, or commit\n" +
+			"  tide create feature/two-fa --local           # no network: use the local base\n" +
+			"  tide create feature/two-fa --track           # check out a branch that exists on the remote\n" +
+			"  tide create feature/two-fa --push            # also push and set the upstream",
+		Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return create.Run(cmd.Context(), repo, cfg, args[0], opts, e.p)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&opts.From, "from", "", "start point: a branch, tag, or commit (default: base from .tide.yml)")
+	f.BoolVar(&opts.Local, "local", false, "start from the local branch; no network")
+	f.BoolVar(&opts.Track, "track", false, "create from the remote branch of the same name and track it")
+	f.BoolVar(&opts.Push, "push", false, "push the new branch and set its upstream")
+	f.BoolVar(&opts.NoSwitch, "no-switch", false, "create the branch without switching to it")
 	return cmd
 }
 
