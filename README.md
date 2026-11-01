@@ -34,7 +34,7 @@ Requirements:
 Build from source and put the binary on your `PATH`:
 
 ```bash
-git clone <repository-url> git-tide && cd git-tide
+git clone https://github.com/Cellestias/git-tide.git && cd git-tide
 make build                      # produces ./tide
 sudo mv tide /usr/local/bin/    # or any directory on your PATH
 tide --version
