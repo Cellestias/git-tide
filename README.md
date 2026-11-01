@@ -6,6 +6,7 @@ Git Tide (`tide`) is a command-line tool that sits on top of Git and makes every
 
 - **Update** a working branch from its base branch in one command, without risking uncommitted work.
 - **Review** a GitHub Pull Request on a predictable local branch.
+- **Start** new branches from a fresh base.
 - **Open** a Pull Request from your current branch.
 - **Guard** your repository with local hooks: Conventional Commits, secret scanning, and protected branches.
 
@@ -53,7 +54,7 @@ tide doctor      # checks that everything is set up
 Then, in daily use:
 
 ```bash
-git switch -c feature/login          # normal Git
+tide create feature/login            # new branch from the fresh base
 git commit -m "feat: add login form" # hooks validate the message and scan for secrets
 tide update                          # bring the base branch into feature/login
 tide pr                              # push and open a Pull Request
@@ -78,6 +79,30 @@ tide init [--base <branch>] [--no-hooks]
 - An existing Git hook is **preserved**: it is renamed to `<hook>.pre-tide` and still runs after Tide's checks pass. Tide refuses to proceed if a `.pre-tide` file already exists.
 - Re-running `init` is safe; hooks that are already current are left alone.
 - `--no-hooks` (or `hooks.manage: false`) skips hook installation.
+
+### `tide create <branch>`
+
+Creates a branch from an up-to-date base and switches to it.
+
+```bash
+tide create feature/two-fa                  # from the configured base, fetched first
+tide create feature/two-fa --from release/1 # from another branch, tag, or commit
+tide create feature/two-fa --local          # no network: use the local base
+tide create feature/two-fa --track          # check out a branch that already exists on the remote
+tide create feature/two-fa --push           # also push it and set the upstream
+```
+
+By default Tide resolves the base for the new name from `branches.base` (falling back to `default_base`), fetches it, and starts the branch at `<remote>/<base>`. Your local copy of the base branch is not touched, and the new branch has **no upstream** until you push it, so a plain `git push` cannot target the base by accident.
+
+| Flag | Effect |
+|---|---|
+| `--from <ref>` | Start from this branch, tag, or commit instead of the configured base. A remote branch is fetched fresh; a tag, commit, or local-only branch is used as it is. |
+| `--local` | Start from the local branch and make no network call. If the local branch does not exist, the last fetched `<remote>/<branch>` is used and the output says it was not refreshed. |
+| `--track` | The branch must already exist on the remote: create a local branch from it and set the upstream. Cannot be combined with `--from`, `--local`, or `--push`. |
+| `--push` | Push the new branch and set `<remote>/<branch>` as its upstream. If the push fails, the branch still exists locally. |
+| `--no-switch` | Create the branch without checking it out; also allowed with uncommitted changes. |
+
+`tide create` refuses (without changing anything) when the name is invalid or is a protected branch, the branch already exists locally, a merge or rebase is in progress, or, unless `--no-switch` is given, tracked files have uncommitted changes. Note that the base is resolved from the *new* branch name, so `feat/x` only picks up a `feature/*` mapping if you add a `feat/*` pattern.
 
 ### `tide update [branch]`
 
@@ -264,7 +289,7 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 - **Secrets stay out of output.** Tide never prints matched values, tokens, or credentials embedded in remote URLs.
 - **Tokens.** Tide reads `GITHUB_TOKEN` (or `GH_TOKEN`) from the environment and never stores it. Do not put tokens in `.tide.yml`.
 - **Repository configuration is untrusted input.** Tide bounds file size and pattern count, uses Go's RE2 regular expressions (no catastrophic backtracking), and validates branch names before passing them to Git. Git is always run with an argument list, never through a shell.
-- **No hidden network calls.** Only `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API) touch the network, and each says so as it runs.
+- **No hidden network calls.** Only `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API) touch the network, and each says so as it runs.
 - **GitHub only.** `review` and `pr` support `github.com` remotes. `TIDE_GITHUB_API_URL` can point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing.
 - No telemetry.
 
