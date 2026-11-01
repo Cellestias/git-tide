@@ -3,6 +3,9 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,9 +43,18 @@ func tide(t *testing.T, dir string, args ...string) (string, int) {
 
 func runIn(t *testing.T, dir, bin string, args ...string) (string, int) {
 	t.Helper()
+	return runEnv(t, dir, nil, "", bin, args...)
+}
+
+// runEnv is runIn with extra environment variables and optional stdin.
+func runEnv(t *testing.T, dir string, extra []string, stdin, bin string, args ...string) (string, int) {
+	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	cmd.Env = append(append(os.Environ(), extra...),
 		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@example.invalid",
@@ -83,6 +95,7 @@ func TestExitCodes(t *testing.T) {
 		{"update without config", repo, []string{"update"}, 3},
 		{"config validate without file", repo, []string{"config", "validate"}, 3},
 		{"doctor outside repo", notRepo, []string{"doctor"}, 1},
+		{"pr without config", repo, []string{"pr"}, 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -191,5 +204,59 @@ func TestUpdateEndToEnd(t *testing.T) {
 	out, code = tide(t, dir, "config")
 	if code != 0 || !strings.Contains(out, "default_base: main") {
 		t.Fatalf("config: %d\n%s", code, out)
+	}
+}
+
+func TestPREndToEnd(t *testing.T) {
+	var got map[string]any
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"number":42,"html_url":"https://github.com/acme/tool/pull/42"}`))
+	}))
+	defer srv.Close()
+	apiEnv := []string{"TIDE_GITHUB_API_URL=" + srv.URL, "GITHUB_TOKEN=test-token", "GH_TOKEN="}
+
+	dir, bare := testutil.NewRepoWithRemote(t)
+	testutil.Run(t, dir, "remote", "set-url", "origin", "https://github.com/acme/tool.git")
+	testutil.Run(t, dir, "config", "url."+bare+".insteadOf", "https://github.com/acme/tool.git")
+	if out, code := tide(t, dir, "init"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	git(t, dir, "checkout", "-q", "-b", "feature/pay")
+	testutil.WriteFile(t, dir, "pay.txt", "p\n")
+	git(t, dir, "add", "pay.txt")
+	if out, code := git(t, dir, "commit", "-q", "-m", "feat: add pay"); code != 0 {
+		t.Fatalf("commit: %s", out)
+	}
+	bin := filepath.Join(binDir, "tide")
+
+	// no token → configuration error, nothing pushed
+	out, code := runEnv(t, dir, []string{"GITHUB_TOKEN=", "GH_TOKEN="}, "", bin, "pr", "--yes")
+	if code != 3 || !strings.Contains(out, "GITHUB_TOKEN") {
+		t.Fatalf("no token: %d\n%s", code, out)
+	}
+
+	// declined → exit 1, nothing pushed
+	out, code = runEnv(t, dir, apiEnv, "n\n", bin, "pr")
+	if code != 1 || !strings.Contains(out, "nothing was pushed") || got != nil {
+		t.Fatalf("declined: %d\n%s", code, out)
+	}
+	if o, _ := git(t, bare, "branch", "--list", "feature/*"); strings.TrimSpace(o) != "" {
+		t.Fatal("branch pushed despite refusal")
+	}
+
+	// confirmed
+	out, code = runEnv(t, dir, apiEnv, "y\n", bin, "pr", "--draft")
+	if code != 0 || !strings.Contains(out, "pull/42") {
+		t.Fatalf("confirmed: %d\n%s", code, out)
+	}
+	if auth != "Bearer test-token" || got["head"] != "feature/pay" || got["base"] != "main" || got["draft"] != true || got["title"] != "feat: add pay" {
+		t.Fatalf("request: auth=%q body=%v", auth, got)
+	}
+	if o, _ := git(t, bare, "branch", "--list", "feature/pay"); !strings.Contains(o, "feature/pay") {
+		t.Fatal("branch not pushed")
 	}
 }
