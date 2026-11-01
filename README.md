@@ -306,8 +306,3 @@ Tests use disposable Git repositories and a fake GitHub API; they never touch yo
 - Use Conventional Commits, matching what the hooks enforce.
 - Keep changes small and tested; prefer the standard library.
 - Never log secrets, and invoke Git with argument arrays.
-
-More detail:
-
-- [`ARCHITECTURE.md`](ARCHITECTURE.md): layers, module layout, workflows, and the design decisions made so far.
-- [`TOOLS.md`](TOOLS.md): language, dependencies, testing, CI, and release tooling.
