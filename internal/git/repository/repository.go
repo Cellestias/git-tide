@@ -406,3 +406,20 @@ func (r *Repository) CreateBranch(ctx context.Context, name, start string, track
 	_, err := r.git(ctx, "branch", trackFlag, name, start)
 	return err
 }
+
+// PreviousBranch returns the branch checked out before the current one
+// (Git's "@{-1}"), or "" when there is none or it was a detached HEAD.
+func (r *Repository) PreviousBranch(ctx context.Context) string {
+	out, err := r.git(ctx, "rev-parse", "--abbrev-ref", "@{-1}")
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(out)
+	if name == "" || branch.ValidName(name) != nil {
+		return ""
+	}
+	if ok, _ := r.refExists(ctx, "refs/heads/"+name); !ok {
+		return ""
+	}
+	return name
+}
