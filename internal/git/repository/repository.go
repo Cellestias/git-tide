@@ -332,3 +332,37 @@ func (r *Repository) UpdateBranchFromRef(ctx context.Context, name, ref string) 
 	}
 	return r.Fetch(ctx, ".", ref+":refs/heads/"+name)
 }
+
+// Ahead counts the commits reachable from head but not from base, and returns
+// the subjects of the non-merge ones in chronological order.
+func (r *Repository) Ahead(ctx context.Context, base, head string) (int, []string, error) {
+	out, err := r.git(ctx, "rev-list", "--count", base+".."+head)
+	if err != nil {
+		return 0, nil, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, nil, fmt.Errorf("parse commit count %q: %w", out, err)
+	}
+	out, err = r.git(ctx, "log", "--no-merges", "--reverse", "--format=%s%x00", base+".."+head)
+	if err != nil {
+		return 0, nil, err
+	}
+	var subjects []string
+	for _, s := range strings.Split(out, "\x00") {
+		if s = strings.TrimSpace(s); s != "" {
+			subjects = append(subjects, s)
+		}
+	}
+	return n, subjects, nil
+}
+
+// PushBranch pushes refs/heads/name to remote and sets it as upstream. Git
+// runs the pre-push hook, so Tide's own policy applies.
+func (r *Repository) PushBranch(ctx context.Context, remote, name string) error {
+	if err := branch.ValidName(name); err != nil {
+		return err
+	}
+	_, err := r.git(ctx, "push", "--set-upstream", "--", remote, "refs/heads/"+name+":refs/heads/"+name)
+	return err
+}
