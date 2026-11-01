@@ -56,6 +56,7 @@ Then, in daily use:
 ```bash
 tide create feature/login            # new branch from the fresh base
 git commit -m "feat: add login form" # hooks validate the message and scan for secrets
+tide push                            # publish the branch
 tide update                          # bring the base branch into feature/login
 tide pr                              # push and open a Pull Request
 ```
@@ -151,6 +152,17 @@ tide review https://github.com/acme/tool/pull/123
 - Reads PR metadata from the GitHub API. Public repositories work without a token; private ones need `GITHUB_TOKEN`.
 
 Return to your previous branch with `git switch <branch>`.
+
+### `tide push`
+
+Pushes the current branch to the configured remote under the same name and sets it as upstream.
+
+```bash
+tide push            # publish the current branch
+tide push --force    # after a rebase or amend; asks [y/N] (skip with --yes)
+```
+
+Refuses on a detached HEAD and on protected branches (`branches.protected`). Uncommitted changes are not pushed, and Tide warns when there are some. `--force` is `--force-with-lease`: it replaces the remote branch only if it still points where your last fetch saw it, so a teammate's newer commits are never overwritten silently. Your `pre-push` hook still applies. A plain `git push` keeps working too.
 
 ### `tide pr`
 
