@@ -7,6 +7,7 @@ Git Tide (`tide`) is a command-line tool that sits on top of Git and makes every
 - **Update** a working branch from its base branch in one command, without risking uncommitted work.
 - **Review** a GitHub Pull Request on a predictable local branch.
 - **See** your branches at a glance: base, upstream, staleness, protection, open PRs.
+- **Switch** branches without losing work, with partial names and `-` for the previous branch.
 - **Start** new branches from a fresh base.
 - **Open** a Pull Request from your current branch.
 - **Guard** your repository with local hooks: Conventional Commits, secret scanning, and protected branches.
@@ -80,6 +81,23 @@ tide init [--base <branch>] [--no-hooks]
 - An existing Git hook is **preserved**: it is renamed to `<hook>.pre-tide` and still runs after Tide's checks pass. Tide refuses to proceed if a `.pre-tide` file already exists.
 - Re-running `init` is safe; hooks that are already current are left alone.
 - `--no-hooks` (or `hooks.manage: false`) skips hook installation.
+
+### `tide change <branch>`
+
+Switches to another branch safely. Alias: `tide switch`.
+
+```bash
+tide change feature/two-fa
+tide change two-fa        # unique partial match
+tide change -             # previous branch
+tide change main --carry
+```
+
+- `<branch>` is an exact name, a case-insensitive part of a name that matches exactly one branch, or `-` for the previous branch. An exact name always wins over partial matches. If several branches match, Tide lists them and refuses.
+- A branch that only exists on the remote (already fetched) is created locally with its upstream set.
+- It refuses, without changing anything, while a merge or rebase is in progress, and when tracked files have uncommitted changes. Use `--carry` to let Git bring the changes along; Git still refuses if they would conflict, and nothing is lost either way. Tide never stashes for you.
+- After switching it tells you what to do next: when the branch is behind its base (`tide update`), behind its upstream (`git pull`), when its upstream was deleted, or when it is a protected branch.
+- It makes no network call. Remote branches are the ones you already fetched; refresh them with `tide branch --remote`.
 
 ### `tide branch`
 
