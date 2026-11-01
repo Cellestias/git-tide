@@ -20,7 +20,23 @@ func Run(t testing.TB, dir string, args ...string) string {
 }
 
 // TryRun is Run without failing the test; it returns the combined output and the error.
-func TryRun(dir string, args ...string) (string, error) {
+func TryRun(dir string, args ...string) (string, error) { return tryRunEnv(dir, nil, args...) }
+
+// CommitAs stages everything and commits with the given author, committer and date
+// (RFC 3339), overriding the default test identity.
+func CommitAs(t testing.TB, dir, name, email, date, msg string) {
+	t.Helper()
+	Run(t, dir, "add", "-A")
+	env := []string{
+		"GIT_AUTHOR_NAME=" + name, "GIT_AUTHOR_EMAIL=" + email, "GIT_AUTHOR_DATE=" + date,
+		"GIT_COMMITTER_NAME=" + name, "GIT_COMMITTER_EMAIL=" + email, "GIT_COMMITTER_DATE=" + date,
+	}
+	if out, err := tryRunEnv(dir, env, "commit", "-q", "-m", msg); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+}
+
+func tryRunEnv(dir string, extra []string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
@@ -28,6 +44,7 @@ func TryRun(dir string, args ...string) (string, error) {
 		"GIT_AUTHOR_NAME=Git Tide Test", "GIT_AUTHOR_EMAIL=git-tide-test@example.invalid",
 		"GIT_COMMITTER_NAME=Git Tide Test", "GIT_COMMITTER_EMAIL=git-tide-test@example.invalid",
 	)
+	cmd.Env = append(cmd.Env, extra...) // later entries win
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
