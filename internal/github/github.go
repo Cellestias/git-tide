@@ -3,6 +3,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -88,6 +89,7 @@ type PullRequest struct {
 	Number   int
 	Title    string
 	State    string
+	URL      string
 	Author   string
 	HeadRef  string
 	BaseRef  string
@@ -136,48 +138,124 @@ func checkBaseURL(base string) error {
 
 // GetPullRequest fetches PR metadata.
 func (c *Client) GetPullRequest(ctx context.Context, repo Repo, number int) (PullRequest, error) {
-	endpoint := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", c.BaseURL, url.PathEscape(repo.Owner), url.PathEscape(repo.Name), number)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	body, err := c.do(ctx, http.MethodGet, c.pullsURL(repo)+"/"+strconv.Itoa(number), nil)
 	if err != nil {
 		return PullRequest{}, err
+	}
+	return decodePullRequest(body)
+}
+
+// NewPullRequest describes a pull request to create.
+type NewPullRequest struct {
+	Title string
+	Body  string
+	Head  string // branch in the same repository
+	Base  string
+	Draft bool
+}
+
+// ErrValidation means GitHub rejected the request (HTTP 422), for example
+// because a pull request for the branch already exists. The message comes from
+// GitHub and is safe to show.
+type ErrValidation struct{ Message string }
+
+func (e *ErrValidation) Error() string { return "GitHub rejected the pull request: " + e.Message }
+
+// CreatePullRequest opens a pull request and returns it, including its URL.
+func (c *Client) CreatePullRequest(ctx context.Context, repo Repo, npr NewPullRequest) (PullRequest, error) {
+	payload, err := json.Marshal(map[string]any{
+		"title": npr.Title, "body": npr.Body, "head": npr.Head, "base": npr.Base, "draft": npr.Draft,
+	})
+	if err != nil {
+		return PullRequest{}, err
+	}
+	body, err := c.do(ctx, http.MethodPost, c.pullsURL(repo), payload)
+	if err != nil {
+		return PullRequest{}, err
+	}
+	return decodePullRequest(body)
+}
+
+func (c *Client) pullsURL(repo Repo) string {
+	return fmt.Sprintf("%s/repos/%s/%s/pulls", c.BaseURL, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+}
+
+// do performs a request and maps error statuses to errors that never contain
+// the token or the request URL.
+func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte) ([]byte, error) {
+	var rdr io.Reader
+	if payload != nil {
+		rdr = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, rdr)
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "git-tide")
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
 	}
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return PullRequest{}, fmt.Errorf("request GitHub API: %w", redactURLErr(err))
+		return nil, fmt.Errorf("request GitHub API: %w", redactURLErr(err))
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return PullRequest{}, fmt.Errorf("read GitHub API response: %w", err)
+		return nil, fmt.Errorf("read GitHub API response: %w", err)
 	}
 
 	switch {
-	case resp.StatusCode == http.StatusOK:
+	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated:
+		return body, nil
 	case resp.StatusCode == http.StatusNotFound:
-		return PullRequest{}, ErrNotFound
+		return nil, ErrNotFound
 	case resp.StatusCode == http.StatusUnauthorized:
-		return PullRequest{}, fmt.Errorf("GitHub rejected the token (401); check GITHUB_TOKEN")
+		return nil, fmt.Errorf("GitHub rejected the token (401); check GITHUB_TOKEN")
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
 		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
-			return PullRequest{}, fmt.Errorf("GitHub API rate limit exceeded; set GITHUB_TOKEN or retry later")
+			return nil, fmt.Errorf("GitHub API rate limit exceeded; set GITHUB_TOKEN or retry later")
 		}
-		return PullRequest{}, fmt.Errorf("GitHub denied access (%d); check token permissions", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub denied access (%d); check token permissions", resp.StatusCode)
+	case resp.StatusCode == http.StatusUnprocessableEntity:
+		return nil, &ErrValidation{Message: validationMessage(body)}
 	default:
-		return PullRequest{}, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
+}
 
+func validationMessage(body []byte) string {
+	var v struct {
+		Message string `json:"message"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if json.Unmarshal(body, &v) != nil || v.Message == "" {
+		return "validation failed"
+	}
+	parts := []string{v.Message}
+	for _, e := range v.Errors {
+		if e.Message != "" {
+			parts = append(parts, e.Message)
+		}
+	}
+	return strings.Join(parts, ": ")
+}
+
+func decodePullRequest(body []byte) (PullRequest, error) {
 	var raw struct {
-		Number int    `json:"number"`
-		Title  string `json:"title"`
-		State  string `json:"state"`
-		User   struct {
+		Number  int    `json:"number"`
+		Title   string `json:"title"`
+		State   string `json:"state"`
+		HTMLURL string `json:"html_url"`
+		User    struct {
 			Login string `json:"login"`
 		} `json:"user"`
 		Head struct {
@@ -197,6 +275,7 @@ func (c *Client) GetPullRequest(ctx context.Context, repo Repo, number int) (Pul
 		Number:  raw.Number,
 		Title:   raw.Title,
 		State:   raw.State,
+		URL:     raw.HTMLURL,
 		Author:  raw.User.Login,
 		HeadRef: raw.Head.Ref,
 		BaseRef: raw.Base.Ref,
@@ -205,6 +284,38 @@ func (c *Client) GetPullRequest(ctx context.Context, repo Repo, number int) (Pul
 		pr.HeadRepo = raw.Head.Repo.FullName
 	}
 	return pr, nil
+}
+
+// remoteReader is the part of the repository service RepoFromRemote needs.
+type remoteReader interface {
+	RemoteURL(ctx context.Context, remote string) (string, error)
+	RemoteConfiguredURL(ctx context.Context, remote string) (string, error)
+}
+
+// Errors returned by RepoFromRemote.
+var (
+	ErrNoRemote          = errors.New("remote is not configured")
+	ErrUnsupportedRemote = errors.New("remote is not a supported GitHub remote")
+)
+
+// RepoFromRemote identifies the GitHub repository behind a Git remote. Git
+// may rewrite the URL through url.<base>.insteadOf into something that is not
+// GitHub-shaped, so the URL as written is tried as a fallback.
+func RepoFromRemote(ctx context.Context, r remoteReader, remote string) (Repo, error) {
+	resolved, err := r.RemoteURL(ctx, remote)
+	if err != nil {
+		return Repo{}, fmt.Errorf("%w: %q", ErrNoRemote, remote)
+	}
+	repo, perr := ParseRemoteURL(resolved)
+	if perr == nil {
+		return repo, nil
+	}
+	if raw, err := r.RemoteConfiguredURL(ctx, remote); err == nil {
+		if repo, err := ParseRemoteURL(raw); err == nil {
+			return repo, nil
+		}
+	}
+	return Repo{}, fmt.Errorf("%w: %v", ErrUnsupportedRemote, perr)
 }
 
 // redactURLErr drops the URL from *url.Error so it cannot leak into output.

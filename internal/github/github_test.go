@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -114,5 +115,52 @@ func TestCheckBaseURL(t *testing.T) {
 		if err := checkBaseURL(bad); err == nil {
 			t.Errorf("%q: expected error", bad)
 		}
+	}
+}
+
+func TestCreatePullRequest(t *testing.T) {
+	var gotBody map[string]any
+	var gotMethod, gotType string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotType = r.Method, r.Header.Get("Content-Type")
+		if r.URL.Path != "/repos/acme/tool/pulls" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		if gotBody["head"] == "dup" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write([]byte(`{"message":"Validation Failed","errors":[{"message":"A pull request already exists for acme:dup."}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"number":9,"title":"T","state":"open","html_url":"https://github.com/acme/tool/pull/9",
+			"user":{"login":"ana"},"head":{"ref":"feature/x"},"base":{"ref":"main"}}`))
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, Token: "tok", HTTP: srv.Client()}
+	repo := Repo{"acme", "tool"}
+
+	pr, err := c.CreatePullRequest(context.Background(), repo, NewPullRequest{Title: "T", Body: "B", Head: "feature/x", Base: "main", Draft: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Number != 9 || pr.URL != "https://github.com/acme/tool/pull/9" {
+		t.Errorf("pr = %+v", pr)
+	}
+	if gotMethod != "POST" || gotType != "application/json" {
+		t.Errorf("method=%s type=%s", gotMethod, gotType)
+	}
+	if gotBody["title"] != "T" || gotBody["head"] != "feature/x" || gotBody["base"] != "main" || gotBody["draft"] != true {
+		t.Errorf("body = %v", gotBody)
+	}
+
+	_, err = c.CreatePullRequest(context.Background(), repo, NewPullRequest{Title: "T", Head: "dup", Base: "main"})
+	var verr *ErrValidation
+	if !errors.As(err, &verr) || !strings.Contains(verr.Message, "already exists") {
+		t.Errorf("err = %v", err)
+	}
+	if _, err := c.CreatePullRequest(context.Background(), Repo{"x", "y"}, NewPullRequest{}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v", err)
 	}
 }
