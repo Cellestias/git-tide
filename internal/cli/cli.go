@@ -75,7 +75,7 @@ func (e *env) rootCmd() *cobra.Command {
 		RunE:          func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return apperr.Usage("%v", err) })
-	root.AddCommand(e.initCmd(), e.branchCmd(), e.changeCmd(), e.createCmd(), e.updateCmd(), e.reviewCmd(), e.prCmd(), e.doctorCmd(), e.configCmd(), e.hookCmd())
+	root.AddCommand(e.initCmd(), e.branchCmd(), e.changeCmd(), e.createCmd(), e.pushCmd(), e.updateCmd(), e.reviewCmd(), e.prCmd(), e.doctorCmd(), e.configCmd(), e.hookCmd())
 	return root
 }
 

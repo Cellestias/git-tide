@@ -12,6 +12,7 @@ import (
 	apphooks "github.com/cellestias/git-tide/internal/app/hooks"
 	"github.com/cellestias/git-tide/internal/app/initrepo"
 	"github.com/cellestias/git-tide/internal/app/pr"
+	"github.com/cellestias/git-tide/internal/app/push"
 	"github.com/cellestias/git-tide/internal/app/review"
 	"github.com/cellestias/git-tide/internal/app/update"
 	"github.com/cellestias/git-tide/internal/apperr"
@@ -203,6 +204,35 @@ func (e *env) createCmd() *cobra.Command {
 	f.BoolVar(&opts.Track, "track", false, "create from the remote branch of the same name and track it")
 	f.BoolVar(&opts.Push, "push", false, "push the new branch and set its upstream")
 	f.BoolVar(&opts.NoSwitch, "no-switch", false, "create the branch without switching to it")
+	return cmd
+}
+
+func (e *env) pushCmd() *cobra.Command {
+	var (
+		opts push.Options
+		yes  bool
+	)
+	cmd := &cobra.Command{
+		Use:   "push",
+		Short: "Push the current branch and set its upstream",
+		Long: "Push the current branch to the configured remote under the same name and set it as upstream.\n" +
+			"Protected branches are refused. --force uses --force-with-lease, so work you have not fetched is never overwritten.",
+		Example: "  tide push           # publish the current branch\n" +
+			"  tide push --force   # after rewriting history (rebase, amend); asks first",
+		Args: maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if opts.Force && !yes {
+				opts.Confirm = e.confirm
+			}
+			return push.Run(cmd.Context(), repo, cfg, opts, e.p)
+		},
+	}
+	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "overwrite the remote branch if it was rewritten (--force-with-lease)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation of --force")
 	return cmd
 }
 
