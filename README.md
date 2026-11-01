@@ -34,6 +34,7 @@ The first version is not intended to:
 | `tide init` | Initialise Tide configuration and local Git integration. |
 | `tide update [branch]` | Update the configured base branch and integrate it into the current working branch. |
 | `tide review <PR>` | Fetch and prepare a local workspace for a Pull Request review. |
+| `tide pr` | Push the current branch and open a GitHub Pull Request against its base. |
 | `tide doctor` | Diagnose repository, configuration, Git, and hook setup. |
 | `tide config` | Inspect or validate Tide configuration. |
 
@@ -68,6 +69,15 @@ Conceptual flow:
 6. Display useful review metadata and next steps.
 
 GitHub is the first planned hosting integration. The design should avoid coupling core Git operations to GitHub-specific API types.
+
+### `tide pr`
+
+1. Resolve the GitHub repository from the configured remote and the base branch (`--base`, else the `branches.base` mapping, else `default_base`).
+2. Refuse on a detached HEAD, on the base branch, on a protected branch, or when there are no commits ahead of the base.
+3. Fetch the base, then show the title, base and commit count and ask for confirmation (skip with `--yes`).
+4. Push the branch (the `pre-push` hook still applies) and create the Pull Request.
+
+The title is the commit subject when the branch has one commit, otherwise the humanised branch name; the body lists the commits. Override with `--title` and `--body`; use `--draft` for a draft. Requires `GITHUB_TOKEN` with pull-request write access. If GitHub rejects the request after the push (for example because a PR already exists), the branch stays pushed and the error says so.
 
 ### Commit validation
 
@@ -143,6 +153,7 @@ tide init                        # writes .tide.yml, installs hooks
 tide doctor                      # verifies the setup
 tide update                      # base branch → current branch
 GITHUB_TOKEN=... tide review 123 # for private repositories
+GITHUB_TOKEN=... tide pr         # push + open a Pull Request
 ```
 
 Exit codes: `0` ok, `1` general, `2` usage, `3` configuration, `4` policy rejection, `5` external failure, `6` unsafe repository state.

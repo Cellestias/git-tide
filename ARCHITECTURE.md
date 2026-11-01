@@ -231,6 +231,15 @@ The operation should not automatically stash, reset, clean, or discard changes i
 
 The GitHub API client should be isolated from the core Git workflow. Fetching and checking out the branch should remain Git operations.
 
+### `tide pr`
+
+1. Resolve the GitHub repository from the configured remote.
+2. Resolve the base branch and reject unsafe starting states (detached HEAD, base or protected branch, no commits ahead).
+3. Fetch the base, build the title and body, and ask for confirmation unless `--yes`.
+4. Push the branch with Git (hooks run), then create the Pull Request through the GitHub client.
+
+Confirmation happens before the push so a declined run changes nothing remotely. The GitHub client only creates the PR; pushing stays a Git operation.
+
 ### Commit validation
 
 1. A Git hook invokes Tide at commit time.
@@ -323,8 +332,9 @@ Resolved in the first implementation:
 8. **Minimum versions:** Go 1.23, Git 2.30.
 9. **First-release operating systems:** Linux and macOS (the hooks are POSIX shell scripts). Windows is untested.
 10. **GitHub authentication:** `GITHUB_TOKEN` or `GH_TOKEN` from the environment, optional for public repositories. `TIDE_GITHUB_API_URL` overrides the API root (HTTPS required, except loopback).
-11. **JSON output:** not in v1.
-12. **Telemetry:** none.
+11. **Pull request creation:** `tide pr` pushes automatically after a `y/N` confirmation (`--yes` skips it) and supports `github.com` only. It needs a token with write access; `tide review` still works without one on public repositories.
+12. **JSON output:** not in v1.
+13. **Telemetry:** none.
 
 Hook enforcement summary: `pre-commit` (protected branch, secrets), `commit-msg` (Conventional Commits; Git-generated merge/revert/fixup messages are accepted), `pre-push` (updates or deletions of protected remote branches).
 
