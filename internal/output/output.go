@@ -35,3 +35,8 @@ func (p Printer) Fail(format string, args ...any) {
 func (p Printer) Line(format string, args ...any) {
 	fmt.Fprintf(p.Out, format+"\n", args...)
 }
+
+// Note writes a progress line to Err so that stdout stays clean for data.
+func (p Printer) Note(format string, args ...any) {
+	fmt.Fprintf(p.Err, "→ "+format+"\n", args...)
+}

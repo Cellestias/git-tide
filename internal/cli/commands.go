@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/cellestias/git-tide/internal/app/branches"
 	"github.com/cellestias/git-tide/internal/app/create"
 	"github.com/cellestias/git-tide/internal/app/doctor"
 	apphooks "github.com/cellestias/git-tide/internal/app/hooks"
@@ -97,6 +98,53 @@ func (e *env) reviewCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&opts.Reset, "reset", false, "discard local commits on an existing review branch")
+	return cmd
+}
+
+func (e *env) branchCmd() *cobra.Command {
+	var (
+		opts   branches.Options
+		stale  int
+		sortBy string
+	)
+	cmd := &cobra.Command{
+		Use:     "branch",
+		Aliases: []string{"branches"},
+		Short:   "List branches with their base, upstream, status and last activity",
+		Long: "List local branches with the last update, last commit author, ahead/behind against the upstream and against\n" +
+			"the base branch from .tide.yml, and whether they are protected or already merged.\n" +
+			"Local data only by default; --remote and --github add network calls.\n" +
+			"The author is the author of the last commit: Git does not record who created a branch.",
+		Example: "  tide branch\n" +
+			"  tide branch --remote --github     # include remote-only branches, GitHub protection and open PRs\n" +
+			"  tide branch --mine --sort name\n" +
+			"  tide branch --merged              # candidates for cleanup\n" +
+			"  tide branch --stale 30",
+		Args: maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			opts.StaleDays, opts.Sort = stale, sortBy
+			var gh branches.GitHub
+			if opts.GitHub {
+				client, err := github.NewClient()
+				if err != nil {
+					return apperr.Wrap(apperr.CodeConfig, "invalid GitHub client settings", "", err)
+				}
+				gh = client
+			}
+			return branches.Run(cmd.Context(), repo, cfg, gh, opts, e.p)
+		},
+	}
+	f := cmd.Flags()
+	f.BoolVar(&opts.Remote, "remote", false, "also list branches that only exist on the remote (fetches first)")
+	f.BoolVar(&opts.GitHub, "github", false, "add a GitHub column: branch protection and open pull request (GITHUB_TOKEN for private repos)")
+	f.BoolVar(&opts.Mine, "mine", false, "only branches whose last author is your git user.email")
+	f.IntVar(&stale, "stale", 0, "only branches with no commits for more than `days`")
+	f.BoolVar(&opts.Merged, "merged", false, "only branches with nothing the base branch lacks")
+	f.StringVar(&sortBy, "sort", branches.SortDate, "sort by date (newest first), name, or ahead (most commits ahead of base)")
 	return cmd
 }
 
