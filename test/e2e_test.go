@@ -97,6 +97,7 @@ func TestExitCodes(t *testing.T) {
 		{"doctor outside repo", notRepo, []string{"doctor"}, 1},
 		{"pr without config", repo, []string{"pr"}, 3},
 		{"create needs arg", repo, []string{"create"}, 2},
+		{"branch without config", repo, []string{"branch"}, 3},
 		{"create without config", repo, []string{"create", "feature/x"}, 3},
 	}
 	for _, tt := range tests {
@@ -290,5 +291,29 @@ func TestCreateEndToEnd(t *testing.T) {
 	}
 	if out, code := tide(t, dir, "create", "main"); code != 4 {
 		t.Fatalf("protected name: %d\n%s", code, out)
+	}
+}
+
+func TestBranchEndToEnd(t *testing.T) {
+	dir, bare := testutil.NewRepoWithRemote(t)
+	testutil.Run(t, bare, "branch", "colleague/x", "main")
+	if out, code := tide(t, dir, "init", "--no-hooks"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	git(t, dir, "checkout", "-q", "-b", "feature/z")
+
+	out, code := tide(t, dir, "branch")
+	if code != 0 || !strings.HasPrefix(out, "BRANCH") || !strings.Contains(out, "* feature/z") || strings.Contains(out, "colleague/x") {
+		t.Fatalf("branch: %d\n%s", code, out)
+	}
+	out, code = tide(t, dir, "branch", "--remote", "--sort", "name")
+	if code != 0 || !strings.Contains(out, "colleague/x") || !strings.Contains(out, "remote-only") {
+		t.Fatalf("branch --remote: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "branch", "--sort", "bogus"); code != 2 {
+		t.Fatalf("bad sort: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "branches", "--merged"); code != 0 {
+		t.Fatalf("alias: %d\n%s", code, out)
 	}
 }
