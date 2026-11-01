@@ -8,6 +8,7 @@ import (
 	"github.com/cellestias/git-tide/internal/app/doctor"
 	apphooks "github.com/cellestias/git-tide/internal/app/hooks"
 	"github.com/cellestias/git-tide/internal/app/initrepo"
+	"github.com/cellestias/git-tide/internal/app/pr"
 	"github.com/cellestias/git-tide/internal/app/review"
 	"github.com/cellestias/git-tide/internal/app/update"
 	"github.com/cellestias/git-tide/internal/apperr"
@@ -95,6 +96,44 @@ func (e *env) reviewCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&opts.Reset, "reset", false, "discard local commits on an existing review branch")
+	return cmd
+}
+
+func (e *env) prCmd() *cobra.Command {
+	var (
+		opts pr.Options
+		yes  bool
+	)
+	cmd := &cobra.Command{
+		Use:   "pr",
+		Short: "Push the current branch and open a GitHub Pull Request",
+		Long: "Push the current branch and open a Pull Request against its base branch (from .tide.yml, or --base).\n" +
+			"The title defaults to the commit subject (one commit) or the branch name; the body lists the commits.\n" +
+			"Requires GITHUB_TOKEN with pull-request write access. Asks for confirmation unless --yes is given.",
+		Args: maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			client, err := github.NewClient()
+			if err != nil {
+				return apperr.Wrap(apperr.CodeConfig, "invalid GitHub client settings", "", err)
+			}
+			if client.Token == "" {
+				return apperr.New(apperr.CodeConfig, "GITHUB_TOKEN is not set", "creating a pull request needs a token with pull-request write access")
+			}
+			if !yes {
+				opts.Confirm = e.confirm
+			}
+			return pr.Run(cmd.Context(), repo, cfg, client, opts, e.p)
+		},
+	}
+	cmd.Flags().StringVar(&opts.Base, "base", "", "base branch (default: resolved from .tide.yml)")
+	cmd.Flags().StringVar(&opts.Title, "title", "", "pull request title (default: derived from commits)")
+	cmd.Flags().StringVar(&opts.Body, "body", "", "pull request body (default: list of commits)")
+	cmd.Flags().BoolVar(&opts.Draft, "draft", false, "open as a draft")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
 	return cmd
 }
 

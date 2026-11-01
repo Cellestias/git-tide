@@ -3,11 +3,13 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -73,7 +75,7 @@ func (e *env) rootCmd() *cobra.Command {
 		RunE:          func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return apperr.Usage("%v", err) })
-	root.AddCommand(e.initCmd(), e.updateCmd(), e.reviewCmd(), e.doctorCmd(), e.configCmd(), e.hookCmd())
+	root.AddCommand(e.initCmd(), e.updateCmd(), e.reviewCmd(), e.prCmd(), e.doctorCmd(), e.configCmd(), e.hookCmd())
 	return root
 }
 
@@ -127,4 +129,19 @@ func (e *env) requireConfig(ctx context.Context) (*repository.Repository, domain
 type hookCtx struct {
 	repo *repository.Repository
 	cfg  domain.Config
+}
+
+// confirm asks a yes/no question on the error stream and reads the answer from
+// stdin. Anything but "y"/"yes" (including EOF) is a no.
+func (e *env) confirm(prompt string) (bool, error) {
+	fmt.Fprint(e.p.Err, prompt)
+	line, err := bufio.NewReader(e.in).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true, nil
+	}
+	return false, nil
 }
