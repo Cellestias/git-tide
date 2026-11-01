@@ -12,6 +12,15 @@ import (
 // Run executes git in dir with an isolated identity and fails the test on error.
 func Run(t testing.TB, dir string, args ...string) string {
 	t.Helper()
+	out, err := TryRun(dir, args...)
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return out
+}
+
+// TryRun is Run without failing the test; it returns the combined output and the error.
+func TryRun(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
@@ -20,10 +29,7 @@ func Run(t testing.TB, dir string, args ...string) string {
 		"GIT_COMMITTER_NAME=Git Tide Test", "GIT_COMMITTER_EMAIL=git-tide-test@example.invalid",
 	)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), err
 }
 
 // WriteFile creates path (relative to dir) with content.
