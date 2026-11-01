@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/cellestias/git-tide/internal/app/branches"
+	"github.com/cellestias/git-tide/internal/app/change"
 	"github.com/cellestias/git-tide/internal/app/create"
 	"github.com/cellestias/git-tide/internal/app/doctor"
 	apphooks "github.com/cellestias/git-tide/internal/app/hooks"
@@ -98,6 +99,33 @@ func (e *env) reviewCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&opts.Reset, "reset", false, "discard local commits on an existing review branch")
+	return cmd
+}
+
+func (e *env) changeCmd() *cobra.Command {
+	var opts change.Options
+	cmd := &cobra.Command{
+		Use:     "change <branch>",
+		Aliases: []string{"switch"},
+		Short:   "Switch to another branch safely",
+		Long: "Switch to a branch. <branch> may be a partial name when it is unambiguous (`tide change two-fa`),\n" +
+			"or - for the previous branch. A branch that only exists on the remote is created locally with its upstream.\n" +
+			"Refuses with uncommitted tracked changes unless --carry is given, and while a merge or rebase is in progress.\n" +
+			"No network call is made: remote branches are the ones already fetched (see `tide branch --remote`).",
+		Example: "  tide change feature/two-fa\n" +
+			"  tide change two-fa     # unique partial match\n" +
+			"  tide change -          # previous branch\n" +
+			"  tide change main --carry",
+		Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return change.Run(cmd.Context(), repo, cfg, args[0], opts, e.p)
+		},
+	}
+	cmd.Flags().BoolVar(&opts.Carry, "carry", false, "let Git carry uncommitted changes to the other branch (it refuses on conflicts)")
 	return cmd
 }
 
