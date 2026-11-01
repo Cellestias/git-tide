@@ -96,6 +96,8 @@ func TestExitCodes(t *testing.T) {
 		{"config validate without file", repo, []string{"config", "validate"}, 3},
 		{"doctor outside repo", notRepo, []string{"doctor"}, 1},
 		{"pr without config", repo, []string{"pr"}, 3},
+		{"create needs arg", repo, []string{"create"}, 2},
+		{"create without config", repo, []string{"create", "feature/x"}, 3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -258,5 +260,35 @@ func TestPREndToEnd(t *testing.T) {
 	}
 	if o, _ := git(t, bare, "branch", "--list", "feature/pay"); !strings.Contains(o, "feature/pay") {
 		t.Fatal("branch not pushed")
+	}
+}
+
+func TestCreateEndToEnd(t *testing.T) {
+	dir, bare := testutil.NewRepoWithRemote(t)
+	other := t.TempDir()
+	testutil.Run(t, other, "clone", "-q", bare, ".")
+	testutil.WriteFile(t, other, "up.txt", "u\n")
+	testutil.Commit(t, other, "feat: upstream")
+	testutil.Run(t, other, "push", "-q", "origin", "main")
+	tip := testutil.Run(t, other, "rev-parse", "HEAD")
+
+	if out, code := tide(t, dir, "init"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	out, code := tide(t, dir, "create", "feature/two-fa", "--push")
+	if code != 0 || !strings.Contains(out, "Created and switched to feature/two-fa") {
+		t.Fatalf("create: %d\n%s", code, out)
+	}
+	if testutil.Run(t, dir, "rev-parse", "HEAD") != tip {
+		t.Error("branch not started from the fresh remote base")
+	}
+	if testutil.Run(t, bare, "rev-parse", "refs/heads/feature/two-fa") != tip {
+		t.Error("branch not pushed")
+	}
+	if out, code := tide(t, dir, "create", "feature/two-fa"); code != 6 {
+		t.Fatalf("duplicate: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "create", "main"); code != 4 {
+		t.Fatalf("protected name: %d\n%s", code, out)
 	}
 }
