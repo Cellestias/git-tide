@@ -31,7 +31,7 @@ Git stays the source of truth. Tide runs the Git you already have, needs no serv
 Requirements:
 
 - Git 2.30 or newer on your `PATH`.
-- Go 1.23 or newer, to build from source.
+- Go 1.26.10 or newer, to build from source (a Go 1.21+ install downloads the right toolchain by itself).
 - Linux or macOS. The installed hooks are POSIX shell scripts; Windows is not tested.
 
 Build from source and put the binary on your `PATH`:
