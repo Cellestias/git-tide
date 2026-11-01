@@ -36,21 +36,10 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, pr
 		return apperr.Usage("%v", err)
 	}
 
-	remoteURL, err := repo.RemoteURL(ctx, cfg.Remote)
-	if err != nil {
+	ghRepo, err := github.RepoFromRemote(ctx, repo, cfg.Remote)
+	if errors.Is(err, github.ErrNoRemote) {
 		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not configured", cfg.Remote),
 			"add it with `git remote add` or change `remote` in .tide.yml", err)
-	}
-	ghRepo, err := github.ParseRemoteURL(remoteURL)
-	if err != nil {
-		// url.<base>.insteadOf may have rewritten the URL into something that is
-		// not GitHub-shaped (a mirror, a local path); retry with the URL as written.
-		if raw, rerr := repo.RemoteConfiguredURL(ctx, cfg.Remote); rerr == nil {
-			var perr error
-			if ghRepo, perr = github.ParseRemoteURL(raw); perr == nil {
-				err = nil
-			}
-		}
 	}
 	if err != nil {
 		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not a supported GitHub remote", cfg.Remote),
