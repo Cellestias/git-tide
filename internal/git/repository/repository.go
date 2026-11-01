@@ -360,10 +360,25 @@ func (r *Repository) Ahead(ctx context.Context, base, head string) (int, []strin
 // PushBranch pushes refs/heads/name to remote and sets it as upstream. Git
 // runs the pre-push hook, so Tide's own policy applies.
 func (r *Repository) PushBranch(ctx context.Context, remote, name string) error {
+	return r.pushBranch(ctx, remote, name, false)
+}
+
+// PushBranchWithLease is PushBranch that may rewrite the remote branch, but
+// only if it still points where the remote-tracking ref says (or does not
+// exist, when there is no tracking ref): it never overwrites work it has not seen.
+func (r *Repository) PushBranchWithLease(ctx context.Context, remote, name string) error {
+	return r.pushBranch(ctx, remote, name, true)
+}
+
+func (r *Repository) pushBranch(ctx context.Context, remote, name string, lease bool) error {
 	if err := branch.ValidName(name); err != nil {
 		return err
 	}
-	_, err := r.git(ctx, "push", "--set-upstream", "--", remote, "refs/heads/"+name+":refs/heads/"+name)
+	args := []string{"push", "--set-upstream"}
+	if lease {
+		args = append(args, "--force-with-lease=refs/heads/"+name)
+	}
+	_, err := r.git(ctx, append(args, "--", remote, "refs/heads/"+name+":refs/heads/"+name)...)
 	return err
 }
 

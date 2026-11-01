@@ -292,3 +292,32 @@ func TestCreateEndToEnd(t *testing.T) {
 		t.Fatalf("protected name: %d\n%s", code, out)
 	}
 }
+
+func TestPushEndToEnd(t *testing.T) {
+	dir, bare := testutil.NewRepoWithRemote(t)
+	if out, code := tide(t, dir, "init"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	if out, code := tide(t, dir, "push"); code != 4 {
+		t.Fatalf("push on protected main: %d\n%s", code, out)
+	}
+
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/a")
+	testutil.WriteFile(t, dir, "a.txt", "a\n")
+	testutil.Commit(t, dir, "feat: a")
+	out, code := tide(t, dir, "push")
+	if code != 0 || !strings.Contains(out, "Pushed feature/a") {
+		t.Fatalf("push: %d\n%s", code, out)
+	}
+	if testutil.Run(t, bare, "rev-parse", "refs/heads/feature/a") != testutil.Run(t, dir, "rev-parse", "HEAD") {
+		t.Error("branch not pushed")
+	}
+
+	testutil.Run(t, dir, "commit", "-q", "--amend", "-m", "feat: a again")
+	if out, code := tide(t, dir, "push"); code != 5 {
+		t.Fatalf("push of rewritten history: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "push", "--force", "--yes"); code != 0 {
+		t.Fatalf("force push: %d\n%s", code, out)
+	}
+}
