@@ -1,0 +1,13 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - errorlint
+    - gosec
+    - bodyclose
+    - noctx
+  settings:
+    gosec:
+      excludes:
+        - G204 # git is invoked with an argument array on purpose
+        - G304 # config and hook paths are derived from the repository root
