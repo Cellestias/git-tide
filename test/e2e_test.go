@@ -97,6 +97,9 @@ func TestExitCodes(t *testing.T) {
 		{"doctor outside repo", notRepo, []string{"doctor"}, 1},
 		{"pr without config", repo, []string{"pr"}, 3},
 		{"create needs arg", repo, []string{"create"}, 2},
+		{"branch without config", repo, []string{"branch"}, 3},
+		{"change needs arg", repo, []string{"change"}, 2},
+		{"change without config", repo, []string{"change", "x"}, 3},
 		{"create without config", repo, []string{"create", "feature/x"}, 3},
 	}
 	for _, tt := range tests {
@@ -290,6 +293,56 @@ func TestCreateEndToEnd(t *testing.T) {
 	}
 	if out, code := tide(t, dir, "create", "main"); code != 4 {
 		t.Fatalf("protected name: %d\n%s", code, out)
+	}
+}
+
+func TestBranchEndToEnd(t *testing.T) {
+	dir, bare := testutil.NewRepoWithRemote(t)
+	testutil.Run(t, bare, "branch", "colleague/x", "main")
+	if out, code := tide(t, dir, "init", "--no-hooks"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	git(t, dir, "checkout", "-q", "-b", "feature/z")
+
+	out, code := tide(t, dir, "branch")
+	if code != 0 || !strings.HasPrefix(out, "BRANCH") || !strings.Contains(out, "* feature/z") || strings.Contains(out, "colleague/x") {
+		t.Fatalf("branch: %d\n%s", code, out)
+	}
+	out, code = tide(t, dir, "branch", "--remote", "--sort", "name")
+	if code != 0 || !strings.Contains(out, "colleague/x") || !strings.Contains(out, "remote-only") {
+		t.Fatalf("branch --remote: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "branch", "--sort", "bogus"); code != 2 {
+		t.Fatalf("bad sort: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "branches", "--merged"); code != 0 {
+		t.Fatalf("alias: %d\n%s", code, out)
+	}
+}
+
+func TestChangeEndToEnd(t *testing.T) {
+	dir, _ := testutil.NewRepoWithRemote(t)
+	if out, code := tide(t, dir, "init", "--no-hooks"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	git(t, dir, "branch", "feature/two-fa")
+	git(t, dir, "branch", "feature/login")
+
+	if out, code := tide(t, dir, "change", "two-fa"); code != 0 || !strings.Contains(out, "Switched to feature/two-fa") {
+		t.Fatalf("partial: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "switch", "-"); code != 0 || !strings.Contains(out, "Switched to main") {
+		t.Fatalf("alias and previous: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "change", "feature"); code != 6 || !strings.Contains(out, "matches 2 branches") {
+		t.Fatalf("ambiguous: %d\n%s", code, out)
+	}
+	testutil.WriteFile(t, dir, "README.md", "dirty\n")
+	if out, code := tide(t, dir, "change", "login"); code != 6 || !strings.Contains(out, "--carry") {
+		t.Fatalf("dirty: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "change", "login", "--carry"); code != 0 {
+		t.Fatalf("carry: %d\n%s", code, out)
 	}
 }
 

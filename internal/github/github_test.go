@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -161,6 +162,84 @@ func TestCreatePullRequest(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 	if _, err := c.CreatePullRequest(context.Background(), Repo{"x", "y"}, NewPullRequest{}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestListProtectedBranchesPaginates(t *testing.T) {
+	pages := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		page := r.URL.Query().Get("page")
+		if r.URL.Query().Get("per_page") != "100" {
+			t.Errorf("per_page = %s", r.URL.Query().Get("per_page"))
+		}
+		var items []string
+		n := 100
+		if page == "2" {
+			n = 1
+		}
+		for i := 0; i < n; i++ {
+			name := fmt.Sprintf("b%s-%d", page, i)
+			items = append(items, fmt.Sprintf(`{"name":%q,"protected":%v}`, name, i == 0))
+		}
+		w.Write([]byte("[" + strings.Join(items, ",") + "]"))
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+
+	prot, truncated, err := c.ListProtectedBranches(context.Background(), Repo{"acme", "tool"})
+	if err != nil || truncated {
+		t.Fatalf("err=%v truncated=%v", err, truncated)
+	}
+	if pages != 2 || len(prot) != 101 || !prot["b1-0"] || prot["b1-1"] || !prot["b2-0"] {
+		t.Errorf("pages=%d len=%d", pages, len(prot))
+	}
+}
+
+func TestListProtectedBranchesTruncates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var items []string
+		for i := 0; i < 100; i++ {
+			items = append(items, fmt.Sprintf(`{"name":"p%s-%d","protected":false}`, r.URL.Query().Get("page"), i))
+		}
+		w.Write([]byte("[" + strings.Join(items, ",") + "]"))
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	prot, truncated, err := c.ListProtectedBranches(context.Background(), Repo{"a", "b"})
+	if err != nil || !truncated || len(prot) != maxPages*pageSize {
+		t.Fatalf("err=%v truncated=%v len=%d", err, truncated, len(prot))
+	}
+}
+
+func TestListOpenPullRequests(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("state")
+		w.Write([]byte(`[
+			{"number":1,"title":"a","state":"open","user":{"login":"x"},"head":{"ref":"feature/a","repo":{"full_name":"acme/tool"}},"base":{"ref":"main"}},
+			{"number":2,"title":"b","state":"open","user":{"login":"y"},"head":{"ref":"feature/b","repo":{"full_name":"fork/tool"}},"base":{"ref":"main"}}]`))
+	}))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	prs, truncated, err := c.ListOpenPullRequests(context.Background(), Repo{"acme", "tool"})
+	if err != nil || truncated || gotQuery != "open" {
+		t.Fatalf("err=%v truncated=%v state=%q", err, truncated, gotQuery)
+	}
+	if len(prs) != 2 || prs[0].HeadRef != "feature/a" || prs[1].HeadRepo != "fork/tool" || prs[0].Number != 1 {
+		t.Errorf("prs = %+v", prs)
+	}
+}
+
+func TestListErrorsPropagate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))
+	defer srv.Close()
+	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if _, _, err := c.ListProtectedBranches(context.Background(), Repo{"a", "b"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v", err)
+	}
+	if _, _, err := c.ListOpenPullRequests(context.Background(), Repo{"a", "b"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v", err)
 	}
 }

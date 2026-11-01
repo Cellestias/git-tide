@@ -6,6 +6,8 @@ Git Tide (`tide`) is a command-line tool that sits on top of Git and makes every
 
 - **Update** a working branch from its base branch in one command, without risking uncommitted work.
 - **Review** a GitHub Pull Request on a predictable local branch.
+- **See** your branches at a glance: base, upstream, staleness, protection, open PRs.
+- **Switch** branches without losing work, with partial names and `-` for the previous branch.
 - **Start** new branches from a fresh base.
 - **Open** a Pull Request from your current branch.
 - **Guard** your repository with local hooks: Conventional Commits, secret scanning, and protected branches.
@@ -29,7 +31,7 @@ Git stays the source of truth. Tide runs the Git you already have, needs no serv
 Requirements:
 
 - Git 2.30 or newer on your `PATH`.
-- Go 1.23 or newer, to build from source.
+- Go 1.26.10 or newer, to build from source (a Go 1.21+ install downloads the right toolchain by itself).
 - Linux or macOS. The installed hooks are POSIX shell scripts; Windows is not tested.
 
 Build from source and put the binary on your `PATH`:
@@ -80,6 +82,63 @@ tide init [--base <branch>] [--no-hooks]
 - An existing Git hook is **preserved**: it is renamed to `<hook>.pre-tide` and still runs after Tide's checks pass. Tide refuses to proceed if a `.pre-tide` file already exists.
 - Re-running `init` is safe; hooks that are already current are left alone.
 - `--no-hooks` (or `hooks.manage: false`) skips hook installation.
+
+### `tide change <branch>`
+
+Switches to another branch safely. Alias: `tide switch`.
+
+```bash
+tide change feature/two-fa
+tide change two-fa        # unique partial match
+tide change -             # previous branch
+tide change main --carry
+```
+
+- `<branch>` is an exact name, a case-insensitive part of a name that matches exactly one branch, or `-` for the previous branch. An exact name always wins over partial matches. If several branches match, Tide lists them and refuses.
+- A branch that only exists on the remote (already fetched) is created locally with its upstream set.
+- It refuses, without changing anything, while a merge or rebase is in progress, and when tracked files have uncommitted changes. Use `--carry` to let Git bring the changes along; Git still refuses if they would conflict, and nothing is lost either way. Tide never stashes for you.
+- After switching it tells you what to do next: when the branch is behind its base (`tide update`), behind its upstream (`git pull`), when its upstream was deleted, or when it is a protected branch.
+- It makes no network call. Remote branches are the ones you already fetched; refresh them with `tide branch --remote`.
+
+### `tide branch`
+
+Lists branches with Tide's view of them. Alias: `tide branches`.
+
+```bash
+tide branch                        # local data only, works offline
+tide branch --remote --github      # + remote-only branches, GitHub protection and open PRs
+tide branch --mine --sort name
+tide branch --merged               # candidates for cleanup
+tide branch --stale 30             # no commits for more than 30 days
+```
+
+```text
+BRANCH         UPDATED       LAST AUTHOR  UPSTREAM  BASE     STATUS
+* feature/new  2 hours ago   Ana          in sync   main ↑2  -
+  feature/old  3 months ago  Bruno        none      main ↑1  -
+  fix/done     5 days ago    Ana          none      main ↓1  merged
+  main         1 hour ago    Ana          in sync   -        protected
+```
+
+| Column | Meaning |
+|---|---|
+| `UPDATED` | Date of the last commit on the branch. |
+| `LAST AUTHOR` | Author of the last commit. Git does not record who created a branch, so this is the closest honest answer. |
+| `UPSTREAM` | Ahead (`↑`) and behind (`↓`) against the upstream, `in sync`, `none` when the branch has no upstream, or `gone` when the upstream was deleted on the remote. |
+| `BASE` | The base branch from `.tide.yml` with ahead/behind against it. `-` for the base itself or when it cannot be found. |
+| `STATUS` | `protected` (in `.tide.yml`), `merged` (nothing the base lacks, and the base has moved on), `remote-only`. |
+| `GITHUB` | Only with `--github`: `protected` on GitHub and the open Pull Request (`PR #12`) for the branch. Pull requests from forks are not matched. |
+
+| Flag | Effect |
+|---|---|
+| `--remote` | Fetches the remote (`git fetch --prune`) and also lists branches that exist only there. This is the only network call besides `--github`. |
+| `--github` | Adds the `GITHUB` column through the API. Public repositories work without a token; for private ones set `GITHUB_TOKEN`. If the API cannot be read, the column shows `?` and a warning is printed; the command still succeeds. |
+| `--mine` | Only branches whose last author is your `git config user.email`. |
+| `--stale <days>` | Only branches with no commits for more than that many days. |
+| `--merged` | Only branches that are fully merged into their base. |
+| `--sort date\|name\|ahead` | Newest first (default), by name, or by commits ahead of the base. |
+
+Filters combine (they all must match). Progress messages go to stderr, so the table on stdout is safe to pipe.
 
 ### `tide create <branch>`
 
@@ -301,7 +360,7 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 - **Secrets stay out of output.** Tide never prints matched values, tokens, or credentials embedded in remote URLs.
 - **Tokens.** Tide reads `GITHUB_TOKEN` (or `GH_TOKEN`) from the environment and never stores it. Do not put tokens in `.tide.yml`.
 - **Repository configuration is untrusted input.** Tide bounds file size and pattern count, uses Go's RE2 regular expressions (no catastrophic backtracking), and validates branch names before passing them to Git. Git is always run with an argument list, never through a shell.
-- **No hidden network calls.** Only `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API) touch the network, and each says so as it runs.
+- **No hidden network calls.** Only `branch` (`--remote` fetches, `--github` calls the API), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API) touch the network, and each says so as it runs.
 - **GitHub only.** `review` and `pr` support `github.com` remotes. `TIDE_GITHUB_API_URL` can point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing.
 - No telemetry.
 

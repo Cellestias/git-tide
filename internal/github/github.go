@@ -286,6 +286,84 @@ func decodePullRequest(body []byte) (PullRequest, error) {
 	return pr, nil
 }
 
+const (
+	pageSize = 100
+	maxPages = 10 // lists are capped at pageSize*maxPages entries
+)
+
+// ListProtectedBranches returns, for every branch of repo, whether it is
+// protected on GitHub. truncated reports that the list was capped.
+func (c *Client) ListProtectedBranches(ctx context.Context, repo Repo) (protected map[string]bool, truncated bool, err error) {
+	protected = map[string]bool{}
+	truncated, err = c.eachPage(ctx, c.repoURL(repo)+"/branches", func(raw json.RawMessage) error {
+		var items []struct {
+			Name      string `json:"name"`
+			Protected bool   `json:"protected"`
+		}
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return err
+		}
+		for _, it := range items {
+			protected[it.Name] = it.Protected
+		}
+		return nil
+	}, func(raw json.RawMessage) int {
+		var items []json.RawMessage
+		_ = json.Unmarshal(raw, &items)
+		return len(items)
+	})
+	return protected, truncated, err
+}
+
+// ListOpenPullRequests returns the open pull requests of repo.
+func (c *Client) ListOpenPullRequests(ctx context.Context, repo Repo) (prs []PullRequest, truncated bool, err error) {
+	truncated, err = c.eachPage(ctx, c.pullsURL(repo)+"?state=open", func(raw json.RawMessage) error {
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return err
+		}
+		for _, it := range items {
+			pr, err := decodePullRequest(it)
+			if err != nil {
+				return err
+			}
+			prs = append(prs, pr)
+		}
+		return nil
+	}, func(raw json.RawMessage) int {
+		var items []json.RawMessage
+		_ = json.Unmarshal(raw, &items)
+		return len(items)
+	})
+	return prs, truncated, err
+}
+
+func (c *Client) repoURL(repo Repo) string {
+	return fmt.Sprintf("%s/repos/%s/%s", c.BaseURL, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+}
+
+// eachPage walks a paginated list endpoint. handle consumes one page; count
+// returns how many entries the page held, and a short page ends the walk.
+func (c *Client) eachPage(ctx context.Context, endpoint string, handle func(json.RawMessage) error, count func(json.RawMessage) int) (truncated bool, err error) {
+	sep := "?"
+	if strings.Contains(endpoint, "?") {
+		sep = "&"
+	}
+	for page := 1; page <= maxPages; page++ {
+		body, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s%sper_page=%d&page=%d", endpoint, sep, pageSize, page), nil)
+		if err != nil {
+			return false, err
+		}
+		if err := handle(body); err != nil {
+			return false, fmt.Errorf("decode GitHub API response: %w", err)
+		}
+		if count(body) < pageSize {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // remoteReader is the part of the repository service RepoFromRemote needs.
 type remoteReader interface {
 	RemoteURL(ctx context.Context, remote string) (string, error)
