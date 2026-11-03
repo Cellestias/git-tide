@@ -74,6 +74,10 @@ func NewRepo(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
 	Run(t, dir, "init", "-q", "-b", "main")
+	// The code under test runs plain git (merge, rebase, commit), which reads
+	// the identity from the repository config. CI runners have no global one.
+	Run(t, dir, "config", "user.name", "Git Tide Test")
+	Run(t, dir, "config", "user.email", "git-tide-test@example.invalid")
 	WriteFile(t, dir, "README.md", "hello\n")
 	Commit(t, dir, "feat: initial commit")
 	return dir

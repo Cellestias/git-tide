@@ -187,6 +187,7 @@ func TestMineNeedsEmail(t *testing.T) {
 	f := setup(t)
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_SYSTEM", "/dev/null")
+	testutil.Run(t, f.dir, "config", "--unset", "user.email") // testutil sets one locally
 	_, _, err := run(t, f, cfgFor(), nil, Options{Mine: true})
 	if apperr.CodeOf(err) != apperr.CodeConfig {
 		t.Errorf("err = %v", err)
