@@ -19,7 +19,6 @@ import (
 	"github.com/cellestias/git-tide/internal/app/update"
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/config"
-	"github.com/cellestias/git-tide/internal/github"
 )
 
 func (e *env) initCmd() *cobra.Command {
@@ -93,9 +92,9 @@ func (e *env) reviewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := github.NewClient()
+			client, err := e.githubClient(cmd.Context(), repo)
 			if err != nil {
-				return apperr.Wrap(apperr.CodeConfig, "invalid GitHub client settings", "", err)
+				return err
 			}
 			opts.Ref = args[0]
 			return review.Run(cmd.Context(), repo, cfg, client, opts, e.p)
@@ -160,9 +159,9 @@ func (e *env) branchCmd() *cobra.Command {
 			opts.StaleDays, opts.Sort = stale, sortBy
 			var gh branches.GitHub
 			if opts.GitHub {
-				client, err := github.NewClient()
+				client, err := e.githubClient(cmd.Context(), repo)
 				if err != nil {
-					return apperr.Wrap(apperr.CodeConfig, "invalid GitHub client settings", "", err)
+					return err
 				}
 				gh = client
 			}
@@ -353,19 +352,20 @@ func (e *env) prCmd() *cobra.Command {
 		Short: "Push the current branch and open a GitHub Pull Request",
 		Long: "Push the current branch and open a Pull Request against its base branch (from .tide.yml, or --base).\n" +
 			"The title defaults to the commit subject (one commit) or the branch name; the body lists the commits.\n" +
-			"Requires GITHUB_TOKEN with pull-request write access. Asks for confirmation unless --yes is given.",
+			"Requires GITHUB_TOKEN (environment or .env at the repository root) with pull-request write access. Asks for confirmation unless --yes is given.",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
 			if err != nil {
 				return err
 			}
-			client, err := github.NewClient()
+			client, err := e.githubClient(cmd.Context(), repo)
 			if err != nil {
-				return apperr.Wrap(apperr.CodeConfig, "invalid GitHub client settings", "", err)
+				return err
 			}
 			if client.Token == "" {
-				return apperr.New(apperr.CodeConfig, "GITHUB_TOKEN is not set", "creating a pull request needs a token with pull-request write access")
+				return apperr.New(apperr.CodeConfig, "GITHUB_TOKEN is not set",
+					"export GITHUB_TOKEN, or put it in .env at the repository root; it needs pull-request write access")
 			}
 			if !yes {
 				opts.Confirm = e.confirm
