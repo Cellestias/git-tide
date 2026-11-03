@@ -89,3 +89,30 @@ func TestPreCommit(t *testing.T) {
 		t.Errorf("scanning disabled: %v", err)
 	}
 }
+
+func TestPreCommitRejectsConflictMarkers(t *testing.T) {
+	ctx := context.Background()
+	dir := testutil.NewRepo(t)
+	repo, _ := repository.Open(ctx, executor.Exec{}, dir)
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/x")
+
+	testutil.WriteFile(t, dir, "a.go", "package a\n<<<<<<< HEAD\nx := 1\n=======\nx := 2\n>>>>>>> feature/y\n")
+	testutil.WriteFile(t, dir, "doc.md", "Title\n=======\n") // heading underline is fine
+	testutil.Run(t, dir, "add", "-A")
+
+	cfg := domain.Default()
+	cfg.Secrets.Enabled = false // markers are checked even when secret scanning is off
+	err := PreCommit(ctx, repo, cfg)
+	if apperr.CodeOf(err) != apperr.CodePolicy || !strings.Contains(err.Error(), "a.go:2") || !strings.Contains(err.Error(), "a.go:6") {
+		t.Fatalf("err = %v", err)
+	}
+	if strings.Contains(err.Error(), "doc.md") {
+		t.Errorf("heading underline flagged: %v", err)
+	}
+
+	testutil.WriteFile(t, dir, "a.go", "package a\n<<<<<<< HEAD tide:allow-conflict-marker\n")
+	testutil.Run(t, dir, "add", "-A")
+	if err := PreCommit(ctx, repo, cfg); err != nil {
+		t.Errorf("allow marker ignored: %v", err)
+	}
+}
