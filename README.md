@@ -33,7 +33,7 @@ Tide needs Git 2.30 or newer on your `PATH`. Nothing else: the release binaries 
 
 ### Download a release
 
-Get the archive for your system from the [Releases page](https://github.com/Cellestias/git-tide/releases/latest). Names look like `tide_<version>_<os>_<arch>`:
+Every version is published on the [Releases page](https://github.com/Cellestias/git-tide/releases) with one archive per system, plus `checksums.txt`. Archive names are `tide_<version>_<os>_<arch>`:
 
 | System | Archive |
 |---|---|
@@ -44,26 +44,44 @@ Get the archive for your system from the [Releases page](https://github.com/Cell
 | Windows, x86-64 | `tide_<version>_windows_amd64.zip` |
 | Windows, ARM64 | `tide_<version>_windows_arm64.zip` |
 
-Check the download against `checksums.txt` from the same release, then put `tide` on your `PATH`.
-
 **macOS and Linux**
 
+This downloads the latest release for your system, verifies it against `checksums.txt`, and installs it:
+
 ```bash
-sha256sum -c --ignore-missing checksums.txt   # on macOS: shasum -a 256 -c --ignore-missing checksums.txt
-tar -xzf tide_<version>_<os>_<arch>.tar.gz
-sudo install -m 755 tide_<version>_<os>_<arch>/tide /usr/local/bin/tide
+repo=https://github.com/Cellestias/git-tide
+version=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$repo/releases/latest" | sed 's#.*/##')
+os=$(uname -s | tr '[:upper:]' '[:lower:]')                       # linux or darwin
+case $(uname -m) in x86_64 | amd64) arch=amd64 ;; arm64 | aarch64) arch=arm64 ;; *) echo "unsupported CPU: $(uname -m)" >&2 ;; esac
+name=tide_${version}_${os}_${arch}
+
+curl -fsSLO "$repo/releases/download/$version/$name.tar.gz"
+curl -fsSLO "$repo/releases/download/$version/checksums.txt"
+grep " $name.tar.gz\$" checksums.txt | { sha256sum -c - 2>/dev/null || shasum -a 256 -c -; }   # must print: OK
+tar -xzf "$name.tar.gz"
+sudo install -m 755 "$name/tide" /usr/local/bin/tide
 tide --version
 ```
 
-If you downloaded the archive with a browser on macOS, Gatekeeper may block the unsigned binary. Remove the quarantine flag once: `xattr -d com.apple.quarantine /usr/local/bin/tide`. Downloading with `curl` does not set it.
+If you downloaded the archive with a browser on macOS, Gatekeeper may block the unsigned binary. Remove the quarantine flag once: `xattr -d com.apple.quarantine /usr/local/bin/tide`. Downloading with `curl`, as above, does not set it.
 
 **Windows (PowerShell)**
 
+Set `$version` to the latest tag shown on the Releases page, and use `arm64` instead of `amd64` on an ARM PC:
+
 ```powershell
-(Get-FileHash .\tide_<version>_windows_amd64.zip -Algorithm SHA256).Hash   # compare with checksums.txt
-Expand-Archive .\tide_<version>_windows_amd64.zip -DestinationPath .
+$repo = "https://github.com/Cellestias/git-tide"
+$version = "v1.0.0"
+$name = "tide_${version}_windows_amd64"
+
+Invoke-WebRequest "$repo/releases/download/$version/$name.zip" -OutFile "$name.zip"
+Invoke-WebRequest "$repo/releases/download/$version/checksums.txt" -OutFile checksums.txt
+$expected = ((Select-String -Path checksums.txt -Pattern "$name.zip").Line -split "\s+")[0]
+if ((Get-FileHash "$name.zip" -Algorithm SHA256).Hash -ne $expected) { throw "checksum mismatch" }
+
+Expand-Archive "$name.zip" -DestinationPath .
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\tide" | Out-Null
-Copy-Item .\tide_<version>_windows_amd64\tide.exe "$env:LOCALAPPDATA\Programs\tide\"
+Copy-Item ".\$name\tide.exe" "$env:LOCALAPPDATA\Programs\tide\"
 [Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:LOCALAPPDATA\Programs\tide", "User")
 # open a new terminal, then:
 tide --version
