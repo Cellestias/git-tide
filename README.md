@@ -189,9 +189,22 @@ What it does, in order:
 
 It never stashes, resets, or cleans for you. If the local base branch has diverged from the remote, or is checked out in another worktree, it stops and tells you to resolve that first.
 
-On conflicts the repository is left in Git's normal conflict state. Resolve the files, `git add` them, then run `git merge --continue` (or `git rebase --continue`), or abort with `--abort`.
+On conflicts the repository is left in Git's normal conflict state. Resolve the files, `git add` them, then run [`tide continue`](#tide-continue-and-tide-abort), or give up with `tide abort`. Plain `git merge --continue` and `git rebase --continue` work too.
 
 If you are already on the base branch, `tide update` simply fast-forwards it to the remote.
+
+### `tide continue` and `tide abort`
+
+When `tide update` (or any merge, rebase, cherry-pick or revert) stops on conflicts, these finish or undo it without you having to remember which operation it was.
+
+```bash
+# ...edit the conflicted files, then:
+git add src/auth/login.go
+tide continue          # finishes the merge/rebase/cherry-pick/revert
+tide abort             # or: give up and go back to before it; asks [y/N], --yes skips
+```
+
+`tide continue` refuses while any file still has conflicts and lists them. Before continuing it runs the pre-commit checks, so a file staged with leftover `<<<<<<<` markers or a secret is rejected and the operation stays in progress. Git's prepared message is used as it is, with no editor. A rebase can stop again on the next commit: resolve it and run `tide continue` again. `tide abort` discards the conflict resolutions made so far, which is why it asks first.
 
 ### `tide review <PR>`
 
