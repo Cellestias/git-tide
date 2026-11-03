@@ -14,6 +14,7 @@ import (
 	"github.com/cellestias/git-tide/internal/app/initrepo"
 	"github.com/cellestias/git-tide/internal/app/pr"
 	"github.com/cellestias/git-tide/internal/app/push"
+	"github.com/cellestias/git-tide/internal/app/resolve"
 	"github.com/cellestias/git-tide/internal/app/review"
 	"github.com/cellestias/git-tide/internal/app/update"
 	"github.com/cellestias/git-tide/internal/apperr"
@@ -298,6 +299,48 @@ func messageFlags(cmd *cobra.Command, opts *appcommit.Options) {
 	f.StringVar(&opts.Body, "body", "", "commit body, after a blank line")
 	f.StringVar(&opts.Type, "type", "", "Conventional Commits type; builds \"type(scope): message\" from -m")
 	f.StringVar(&opts.Scope, "scope", "", "scope for --type")
+}
+
+func (e *env) continueCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "continue",
+		Short: "Finish a merge, rebase, cherry-pick or revert after resolving conflicts",
+		Long: "Continue the operation that stopped on conflicts, whichever it is. Every conflict must be resolved and staged first\n" +
+			"(`git add <file>`). Tide runs its pre-commit checks (leftover conflict markers, secrets) before continuing, and the\n" +
+			"message Git prepared is used as it is. A rebase can stop again on the next commit; run `tide continue` again then.",
+		Args: maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return resolve.Continue(cmd.Context(), repo, cfg, e.p)
+		},
+	}
+}
+
+func (e *env) abortCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "abort",
+		Short: "Give up a merge, rebase, cherry-pick or revert and go back to before it",
+		Long: "Abort the operation that stopped on conflicts and restore the branch to how it was before it started.\n" +
+			"Conflict resolutions made so far are discarded, so Tide asks first unless --yes is given.",
+		Args: maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repo, _, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			var opts resolve.Options
+			if !yes {
+				opts.Confirm = e.confirm
+			}
+			return resolve.Abort(cmd.Context(), repo, opts, e.p)
+		},
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
+	return cmd
 }
 
 func (e *env) prCmd() *cobra.Command {
