@@ -213,8 +213,21 @@ func TestSaveRefusesDuringMerge(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".git", "MERGE_HEAD"), []byte(testutil.Run(t, dir, "rev-parse", "HEAD")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := run(repo, dir, Options{Message: "feat: a", Files: []string{"a.txt"}}); apperr.CodeOf(err) != apperr.CodeUnsafeRepo {
+	_, err := run(repo, dir, Options{Message: "feat: a", Files: []string{"a.txt"}})
+	if apperr.CodeOf(err) != apperr.CodeUnsafeRepo || !strings.Contains(apperr.HintOf(err), "git merge --continue") {
+		t.Fatalf("err = %v hint=%q", err, apperr.HintOf(err))
+	}
+}
+
+func TestSaveRefusesConflictMarkersAndUndoesStaging(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.WriteFile(t, dir, "a.go", "package a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> other\n")
+	_, err := run(repo, dir, Options{Message: "feat: a", Everything: true})
+	if apperr.CodeOf(err) != apperr.CodePolicy || !strings.Contains(err.Error(), "a.go:2") {
 		t.Fatalf("err = %v", err)
+	}
+	if staged(t, dir) != "" {
+		t.Errorf("nothing may stay staged; staged=%q", staged(t, dir))
 	}
 }
 

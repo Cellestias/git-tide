@@ -38,7 +38,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		return apperr.Wrap(apperr.CodeExternal, "cannot inspect repository state", "", err)
 	} else if op != "" {
 		return apperr.New(apperr.CodeUnsafeRepo, fmt.Sprintf("a %s is in progress", op),
-			"finish it with `git commit` (or abort it) before using tide commit")
+			fmt.Sprintf("finish it first (git %[1]s --continue / --abort), then use tide commit", op))
 	}
 
 	current, err := repo.CurrentBranch(ctx)
