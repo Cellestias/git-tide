@@ -20,6 +20,7 @@ Git stays the source of truth. Tide runs the Git you already have, needs no serv
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [Configuration](#configuration)
+- [Authentication](#authentication)
 - [What the hooks do](#what-the-hooks-do)
 - [Exit codes](#exit-codes)
 - [Security and limits](#security-and-limits)
@@ -359,6 +360,31 @@ branches:
 
 For a one-off exception, pass the base explicitly: `tide update main` or `tide pr --base main`.
 
+## Authentication
+
+`tide pr` needs a GitHub token with pull-request write access (a fine-grained token with "Pull requests: Read and write" and "Contents: Read" on the repository, or a classic token with the `repo` scope). `tide review` and `tide branch --github` only need one for private repositories. Pushing uses Git's own authentication, not this token.
+
+Tide looks for the token in this order and uses the first it finds:
+
+1. The `GITHUB_TOKEN` environment variable.
+2. The `GH_TOKEN` environment variable.
+3. A `GITHUB_TOKEN=` or `GH_TOKEN=` line in the **`.env` file at the repository root**.
+
+Because the `.env` is per repository, each project can use the token of its own organisation:
+
+```bash
+# <repo>/.env
+GITHUB_TOKEN=ghp_xxx
+```
+
+```bash
+echo ".env" >> .gitignore   # keep it out of Git
+```
+
+Only those two keys are read from `.env`; the rest of the file is ignored and nothing is exported to other processes. Quotes, `export` and `#` comments are understood; `$VARIABLE` is not expanded. The file must be a regular file of at most 64 KB.
+
+If `.env` is **tracked by Git**, Tide refuses to use it, since the token is already exposed: revoke it and run `git rm --cached .env`. If `.env` is not covered by `.gitignore`, Tide uses it but warns, because a careless `git add` (including `tide save` without `-f`) would commit it. A token is never written to the output or to error messages. You can also use your `gh` login: `export GITHUB_TOKEN=$(gh auth token)`.
+
 ## What the hooks do
 
 `tide init` installs three hooks. They apply to every Git client on the machine, including IDEs, not only to the terminal.
@@ -400,7 +426,7 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 - **Local guardrails, not enforcement.** Anyone can bypass hooks with `--no-verify` or edit their local setup. Keep branch protection enabled on GitHub; it is the authoritative control.
 - **Secret scanning is best-effort.** It reduces accidents; it does not guarantee that every secret is caught. If a secret does reach a commit, rotate it.
 - **Secrets stay out of output.** Tide never prints matched values, tokens, or credentials embedded in remote URLs.
-- **Tokens.** Tide reads `GITHUB_TOKEN` (or `GH_TOKEN`) from the environment and never stores it. Do not put tokens in `.tide.yml`.
+- **Tokens.** Tide reads `GITHUB_TOKEN` (or `GH_TOKEN`) from the environment, or from `.env` at the repository root (see [Authentication](#authentication)), and never stores it. Do not put tokens in `.tide.yml`.
 - **Repository configuration is untrusted input.** Tide bounds file size and pattern count, uses Go's RE2 regular expressions (no catastrophic backtracking), and validates branch names before passing them to Git. Git is always run with an argument list, never through a shell.
 - **No hidden network calls.** Only `branch` (`--remote` fetches, `--github` calls the API), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API) touch the network, and each says so as it runs.
 - **GitHub only.** `review` and `pr` support `github.com` remotes. `TIDE_GITHUB_API_URL` can point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing.
@@ -424,7 +450,7 @@ The local base branch has commits the remote does not, or is checked out in anot
 Add `tide:allow-secret` to that line, or narrow your custom pattern.
 
 **`tide pr`: "GITHUB_TOKEN is not set".**
-Export a token with pull-request write access. `tide review` works without one only for public repositories.
+Export a token with pull-request write access, or put it in `.env` at the repository root (see [Authentication](#authentication)). If a warning says `.env` is tracked by Git, Tide ignored it on purpose. `tide review` works without a token only for public repositories.
 
 **`tide review` or `tide pr`: "not a supported GitHub remote".**
 The configured `remote` must be a `github.com` URL (HTTPS, `ssh://`, or `git@github.com:owner/repo.git`). Change `remote` in `.tide.yml` if your GitHub remote is not `origin`.
