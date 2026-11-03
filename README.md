@@ -352,13 +352,15 @@ For a one-off exception, pass the base explicitly: `tide update main` or `tide p
 
 | Hook | Rejects |
 |---|---|
-| `pre-commit` | A commit on a protected branch, or staged changes containing a likely secret. |
+| `pre-commit` | A commit on a protected branch, staged changes containing a likely secret, or leftover merge conflict markers. |
 | `commit-msg` | A message that is not a Conventional Commit. |
 | `pre-push` | A push that updates or deletes a protected branch on the remote. |
 
 **Commit messages** must look like `type(scope)!: description`, where the scope and `!` are optional. Accepted types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. Messages Git generates itself (`Merge ...`, `Revert "..."`, `fixup!`, `squash!`, `amend!`) are accepted. A rejection explains why and shows a valid example.
 
 **Secret scanning** inspects only the lines you add. Built-in detectors cover AWS access key IDs, GitHub tokens, Slack tokens, Stripe live keys, Google API keys, and private key headers; add your own with `secrets.custom_patterns`. Findings show the file, line, and rule name, never the matched value. For a false positive, put `tide:allow-secret` on that line.
+
+**Conflict markers**: added lines that start with `<<<<<<<` or `>>>>>>>` (what Git writes into a file on a conflict) block the commit, so an unresolved conflict cannot slip into history. This check is always on, also when `secrets.enabled` is false. `=======` alone is not flagged, since it is a common heading underline. For content that really contains a marker, put `tide:allow-conflict-marker` on that line. `tide commit` and `tide save` apply the same check.
 
 **Protected branches** stop direct commits and pushes, nudging the team to work on branches and merge through Pull Requests. Commits made while HEAD is detached (for example during a rebase) are not blocked.
 
