@@ -29,18 +29,55 @@ Git stays the source of truth. Tide runs the Git you already have, needs no serv
 
 ## Install
 
-Requirements:
+Tide needs Git 2.30 or newer on your `PATH`. Nothing else: the release binaries are self-contained, so you do not need Go.
 
-- Git 2.30 or newer on your `PATH`.
-- Go 1.26.10 or newer, to build from source (a Go 1.21+ install downloads the right toolchain by itself).
-- Linux or macOS. The installed hooks are POSIX shell scripts; Windows is not tested.
+### Download a release
 
-Build from source and put the binary on your `PATH`:
+Get the archive for your system from the [Releases page](https://github.com/Cellestias/git-tide/releases/latest). Names look like `tide_<version>_<os>_<arch>`:
+
+| System | Archive |
+|---|---|
+| macOS, Apple Silicon (M1 and newer) | `tide_<version>_darwin_arm64.tar.gz` |
+| macOS, Intel | `tide_<version>_darwin_amd64.tar.gz` |
+| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | `tide_<version>_linux_amd64.tar.gz` |
+| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | `tide_<version>_linux_arm64.tar.gz` |
+| Windows, x86-64 | `tide_<version>_windows_amd64.zip` |
+| Windows, ARM64 | `tide_<version>_windows_arm64.zip` |
+
+Check the download against `checksums.txt` from the same release, then put `tide` on your `PATH`.
+
+**macOS and Linux**
+
+```bash
+sha256sum -c --ignore-missing checksums.txt   # on macOS: shasum -a 256 -c --ignore-missing checksums.txt
+tar -xzf tide_<version>_<os>_<arch>.tar.gz
+sudo install -m 755 tide_<version>_<os>_<arch>/tide /usr/local/bin/tide
+tide --version
+```
+
+If you downloaded the archive with a browser on macOS, Gatekeeper may block the unsigned binary. Remove the quarantine flag once: `xattr -d com.apple.quarantine /usr/local/bin/tide`. Downloading with `curl` does not set it.
+
+**Windows (PowerShell)**
+
+```powershell
+(Get-FileHash .\tide_<version>_windows_amd64.zip -Algorithm SHA256).Hash   # compare with checksums.txt
+Expand-Archive .\tide_<version>_windows_amd64.zip -DestinationPath .
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\tide" | Out-Null
+Copy-Item .\tide_<version>_windows_amd64\tide.exe "$env:LOCALAPPDATA\Programs\tide\"
+[Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:LOCALAPPDATA\Programs\tide", "User")
+# open a new terminal, then:
+tide --version
+```
+
+Windows SmartScreen may warn about an unsigned program the first time; choose "More info", then "Run anyway". Tide's hooks are POSIX shell scripts, which [Git for Windows](https://gitforwindows.org) runs with its bundled shell, so install Git that way. Windows binaries are built and started on every release, but the full test suite runs on Linux and macOS only; treat Windows as supported on a best-effort basis and report problems.
+
+### Build from source
+
+Requires Go 1.26.10 or newer (a Go 1.21+ install downloads the right toolchain by itself).
 
 ```bash
 git clone https://github.com/Cellestias/git-tide.git && cd git-tide
-make build                      # produces ./tide
-sudo mv tide /usr/local/bin/    # or any directory on your PATH
+make install                    # builds and installs to /usr/local/bin (PREFIX=~/.local to change)
 tide --version
 ```
 
@@ -459,6 +496,8 @@ The configured `remote` must be a `github.com` URL (HTTPS, `ssh://`, or `git@git
 
 ```bash
 make build     # build ./tide
+make install   # build and install to $(PREFIX)/bin (default /usr/local)
+make release VERSION=v1.2.3   # archives and checksums for every platform in ./dist
 make test      # go test -race ./...
 make fmt       # gofmt -w .
 make lint      # go vet + golangci-lint
@@ -470,3 +509,13 @@ Tests use disposable Git repositories and a fake GitHub API; they never touch yo
 - Use Conventional Commits, matching what the hooks enforce.
 - Keep changes small and tested; prefer the standard library.
 - Never log secrets, and invoke Git with argument arrays.
+
+### Publishing a release
+
+Releases are built by CI. Merge the work into the release branch, then tag it:
+
+```bash
+git tag v1.2.3 && git push origin v1.2.3
+```
+
+The `release` workflow runs vet and the tests, builds the six archives with `scripts/release.sh`, starts the Linux, macOS and Windows binaries as a smoke test, and publishes the GitHub Release with `checksums.txt` and generated notes. A tag with a suffix (`v1.2.3-rc1`) is published as a pre-release.
