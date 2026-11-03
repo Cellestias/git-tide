@@ -374,3 +374,37 @@ func TestPushEndToEnd(t *testing.T) {
 		t.Fatalf("force push: %d\n%s", code, out)
 	}
 }
+
+func TestSaveAndCommitEndToEnd(t *testing.T) {
+	dir, _ := testutil.NewRepoWithRemote(t)
+	if out, code := tide(t, dir, "init"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	testutil.WriteFile(t, dir, "a.txt", "a\n")
+	if out, code := tide(t, dir, "save", "-m", "feat: add a", "-f", "a.txt"); code != 4 {
+		t.Fatalf("save on protected main: %d\n%s", code, out)
+	}
+
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/a")
+	if out, code := tide(t, dir, "save", "-m", "feat: add a"); code != 2 {
+		t.Fatalf("save without -f: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "save", "-m", "added a", "-f", "a.txt"); code != 4 {
+		t.Fatalf("invalid message: %d\n%s", code, out)
+	}
+	out, code := tide(t, dir, "save", "--type", "feat", "--scope", "a", "-m", "add a", "-f", "a.txt")
+	if code != 0 || !strings.Contains(out, "Committed") {
+		t.Fatalf("save: %d\n%s", code, out)
+	}
+	if got := testutil.Run(t, dir, "log", "-1", "--format=%s"); got != "feat(a): add a" {
+		t.Errorf("subject = %q", got)
+	}
+
+	testutil.WriteFile(t, dir, "a.txt", "changed\n")
+	if out, code := tide(t, dir, "commit", "-m", "fix: change a"); code != 6 {
+		t.Fatalf("commit with nothing staged: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "commit", "-a", "-m", "fix: change a"); code != 0 {
+		t.Fatalf("commit -a: %d\n%s", code, out)
+	}
+}

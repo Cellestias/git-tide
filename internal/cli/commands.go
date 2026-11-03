@@ -7,6 +7,7 @@ import (
 
 	"github.com/cellestias/git-tide/internal/app/branches"
 	"github.com/cellestias/git-tide/internal/app/change"
+	appcommit "github.com/cellestias/git-tide/internal/app/commit"
 	"github.com/cellestias/git-tide/internal/app/create"
 	"github.com/cellestias/git-tide/internal/app/doctor"
 	apphooks "github.com/cellestias/git-tide/internal/app/hooks"
@@ -234,6 +235,69 @@ func (e *env) pushCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "overwrite the remote branch if it was rewritten (--force-with-lease)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation of --force")
 	return cmd
+}
+
+func (e *env) commitCmd() *cobra.Command {
+	var opts appcommit.Options
+	cmd := &cobra.Command{
+		Use:   "commit",
+		Short: "Commit what is staged, checking Tide's rules first",
+		Long: "Commit the staged changes. Tide checks the branch is not protected, the message follows the Conventional Commits rules,\n" +
+			"and the staged lines hold no likely secrets, then runs git commit (your hooks still run).\n" +
+			"Use `tide save` to stage specific files and commit them in one step.",
+		Example: "  tide commit -m \"feat(auth): add login form\"\n" +
+			"  tide commit --type feat --scope auth -m \"add login form\"\n" +
+			"  tide commit -a -m \"fix: handle empty token\"   # also stage tracked changes",
+		Args: maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			opts.Cwd = e.dir
+			return appcommit.Run(cmd.Context(), repo, cfg, opts, e.p)
+		},
+	}
+	messageFlags(cmd, &opts)
+	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "stage modifications and deletions of tracked files first")
+	return cmd
+}
+
+func (e *env) saveCmd() *cobra.Command {
+	var opts appcommit.Options
+	cmd := &cobra.Command{
+		Use:   "save",
+		Short: "Stage the given files and commit them in one step",
+		Long: "Stage the files given with -f and commit them. Equivalent to `git add <files>` followed by `tide commit`.\n" +
+			"Refuses if other files are already staged, so the commit holds exactly what you named. If a check fails,\n" +
+			"the index is restored and nothing stays staged.",
+		Example: "  tide save -m \"feat(auth): add login form\" -f src/auth/login_form.tsx\n" +
+			"  tide save --type fix -m \"handle empty token\" -f api/token.go -f api/token_test.go\n" +
+			"  tide save -m \"docs: update readme\" -f docs/   # a directory stages everything under it",
+		Args: maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if len(opts.Files) == 0 {
+				return apperr.Usage("name at least one file with -f; to commit what is already staged use `tide commit`")
+			}
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			opts.Cwd = e.dir
+			return appcommit.Run(cmd.Context(), repo, cfg, opts, e.p)
+		},
+	}
+	messageFlags(cmd, &opts)
+	cmd.Flags().StringArrayVarP(&opts.Files, "file", "f", nil, "file or directory to stage and commit (repeatable)")
+	return cmd
+}
+
+func messageFlags(cmd *cobra.Command, opts *appcommit.Options) {
+	f := cmd.Flags()
+	f.StringVarP(&opts.Message, "message", "m", "", "commit message (the subject line)")
+	f.StringVar(&opts.Body, "body", "", "commit body, after a blank line")
+	f.StringVar(&opts.Type, "type", "", "Conventional Commits type; builds \"type(scope): message\" from -m")
+	f.StringVar(&opts.Scope, "scope", "", "scope for --type")
 }
 
 func (e *env) prCmd() *cobra.Command {
