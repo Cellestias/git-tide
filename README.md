@@ -33,37 +33,54 @@ Tide needs Git 2.30 or newer on your `PATH`. Nothing else: the release binaries 
 
 ### Download a release
 
-Get the archive for your system from the [Releases page](https://github.com/Cellestias/git-tide/releases/latest). Names look like `tide_<version>_<os>_<arch>`:
+Pick your system. Each link always points to the latest release (all versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases), with `checksums.txt` to verify the download):
 
-| System | Archive |
+| System | Download |
 |---|---|
-| macOS, Apple Silicon (M1 and newer) | `tide_<version>_darwin_arm64.tar.gz` |
-| macOS, Intel | `tide_<version>_darwin_amd64.tar.gz` |
-| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | `tide_<version>_linux_amd64.tar.gz` |
-| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | `tide_<version>_linux_arm64.tar.gz` |
-| Windows, x86-64 | `tide_<version>_windows_amd64.zip` |
-| Windows, ARM64 | `tide_<version>_windows_arm64.zip` |
-
-Check the download against `checksums.txt` from the same release, then put `tide` on your `PATH`.
+| macOS, Apple Silicon (M1 and newer) | [tide_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_darwin_arm64.tar.gz) |
+| macOS, Intel | [tide_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_darwin_amd64.tar.gz) |
+| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [tide_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_linux_amd64.tar.gz) |
+| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [tide_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_linux_arm64.tar.gz) |
+| Windows, x86-64 | [tide_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/latest/download/tide_windows_amd64.zip) |
+| Windows, ARM64 | [tide_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/latest/download/tide_windows_arm64.zip) |
+| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/latest/download/checksums.txt) |
 
 **macOS and Linux**
 
+This downloads the right archive for your system, verifies it against `checksums.txt`, and installs it:
+
 ```bash
-sha256sum -c --ignore-missing checksums.txt   # on macOS: shasum -a 256 -c --ignore-missing checksums.txt
-tar -xzf tide_<version>_<os>_<arch>.tar.gz
-sudo install -m 755 tide_<version>_<os>_<arch>/tide /usr/local/bin/tide
+url=https://github.com/Cellestias/git-tide/releases/latest/download
+os=$(uname -s | tr '[:upper:]' '[:lower:]')                       # linux or darwin
+case $(uname -m) in x86_64 | amd64) arch=amd64 ;; arm64 | aarch64) arch=arm64 ;; *) echo "unsupported CPU: $(uname -m)" >&2 ;; esac
+name=tide_${os}_${arch}
+
+curl -fsSLO "$url/$name.tar.gz"
+curl -fsSLO "$url/checksums.txt"
+grep " $name.tar.gz\$" checksums.txt | { sha256sum -c - 2>/dev/null || shasum -a 256 -c -; }   # must print: OK
+tar -xzf "$name.tar.gz"
+sudo install -m 755 "$name/tide" /usr/local/bin/tide
 tide --version
 ```
 
-If you downloaded the archive with a browser on macOS, Gatekeeper may block the unsigned binary. Remove the quarantine flag once: `xattr -d com.apple.quarantine /usr/local/bin/tide`. Downloading with `curl` does not set it.
+If you downloaded the archive with a browser on macOS, Gatekeeper may block the unsigned binary. Remove the quarantine flag once: `xattr -d com.apple.quarantine /usr/local/bin/tide`. Downloading with `curl`, as above, does not set it.
 
 **Windows (PowerShell)**
 
+Use `arm64` instead of `amd64` on an ARM PC:
+
 ```powershell
-(Get-FileHash .\tide_<version>_windows_amd64.zip -Algorithm SHA256).Hash   # compare with checksums.txt
-Expand-Archive .\tide_<version>_windows_amd64.zip -DestinationPath .
+$url = "https://github.com/Cellestias/git-tide/releases/latest/download"
+$name = "tide_windows_amd64"
+
+Invoke-WebRequest "$url/$name.zip" -OutFile "$name.zip"
+Invoke-WebRequest "$url/checksums.txt" -OutFile checksums.txt
+$expected = ((Select-String -Path checksums.txt -Pattern "$name.zip").Line -split "\s+")[0]
+if ((Get-FileHash "$name.zip" -Algorithm SHA256).Hash -ne $expected) { throw "checksum mismatch" }
+
+Expand-Archive "$name.zip" -DestinationPath .
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\tide" | Out-Null
-Copy-Item .\tide_<version>_windows_amd64\tide.exe "$env:LOCALAPPDATA\Programs\tide\"
+Copy-Item ".\$name\tide.exe" "$env:LOCALAPPDATA\Programs\tide\"
 [Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:LOCALAPPDATA\Programs\tide", "User")
 # open a new terminal, then:
 tide --version
