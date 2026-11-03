@@ -33,30 +33,31 @@ Tide needs Git 2.30 or newer on your `PATH`. Nothing else: the release binaries 
 
 ### Download a release
 
-Pick your system. Each link always points to the latest release (all versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases), with `checksums.txt` to verify the download):
+The links below are for **v1.0.0**, the current release. Older and newer versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases). Archive names are `tide_<version>_<os>_<arch>`; verify a download against `checksums.txt` from the same release.
 
 | System | Download |
 |---|---|
-| macOS, Apple Silicon (M1 and newer) | [tide_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_darwin_arm64.tar.gz) |
-| macOS, Intel | [tide_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_darwin_amd64.tar.gz) |
-| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [tide_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_linux_amd64.tar.gz) |
-| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [tide_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_linux_arm64.tar.gz) |
-| Windows, x86-64 | [tide_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/latest/download/tide_windows_amd64.zip) |
-| Windows, ARM64 | [tide_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/latest/download/tide_windows_arm64.zip) |
-| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/latest/download/checksums.txt) |
+| macOS, Apple Silicon (M1 and newer) | [tide_v1.0.0_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_darwin_arm64.tar.gz) |
+| macOS, Intel | [tide_v1.0.0_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_darwin_amd64.tar.gz) |
+| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [tide_v1.0.0_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_linux_amd64.tar.gz) |
+| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [tide_v1.0.0_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_linux_arm64.tar.gz) |
+| Windows, x86-64 | [tide_v1.0.0_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_windows_amd64.zip) |
+| Windows, ARM64 | [tide_v1.0.0_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_windows_arm64.zip) |
+| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/checksums.txt) |
 
 **macOS and Linux**
 
-This downloads the right archive for your system, verifies it against `checksums.txt`, and installs it:
+This downloads the latest release for your system, verifies it against `checksums.txt`, and installs it:
 
 ```bash
-url=https://github.com/Cellestias/git-tide/releases/latest/download
+repo=https://github.com/Cellestias/git-tide
+version=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$repo/releases/latest" | sed 's#.*/##')
 os=$(uname -s | tr '[:upper:]' '[:lower:]')                       # linux or darwin
 case $(uname -m) in x86_64 | amd64) arch=amd64 ;; arm64 | aarch64) arch=arm64 ;; *) echo "unsupported CPU: $(uname -m)" >&2 ;; esac
-name=tide_${os}_${arch}
+name=tide_${version}_${os}_${arch}
 
-curl -fsSLO "$url/$name.tar.gz"
-curl -fsSLO "$url/checksums.txt"
+curl -fsSLO "$repo/releases/download/$version/$name.tar.gz"
+curl -fsSLO "$repo/releases/download/$version/checksums.txt"
 grep " $name.tar.gz\$" checksums.txt | { sha256sum -c - 2>/dev/null || shasum -a 256 -c -; }   # must print: OK
 tar -xzf "$name.tar.gz"
 sudo install -m 755 "$name/tide" /usr/local/bin/tide
@@ -67,14 +68,15 @@ If you downloaded the archive with a browser on macOS, Gatekeeper may block the 
 
 **Windows (PowerShell)**
 
-Use `arm64` instead of `amd64` on an ARM PC:
+Set `$version` to the latest tag shown on the Releases page, and use `arm64` instead of `amd64` on an ARM PC:
 
 ```powershell
-$url = "https://github.com/Cellestias/git-tide/releases/latest/download"
-$name = "tide_windows_amd64"
+$repo = "https://github.com/Cellestias/git-tide"
+$version = "v1.0.0"
+$name = "tide_${version}_windows_amd64"
 
-Invoke-WebRequest "$url/$name.zip" -OutFile "$name.zip"
-Invoke-WebRequest "$url/checksums.txt" -OutFile checksums.txt
+Invoke-WebRequest "$repo/releases/download/$version/$name.zip" -OutFile "$name.zip"
+Invoke-WebRequest "$repo/releases/download/$version/checksums.txt" -OutFile checksums.txt
 $expected = ((Select-String -Path checksums.txt -Pattern "$name.zip").Line -split "\s+")[0]
 if ((Get-FileHash "$name.zip" -Algorithm SHA256).Hash -ne $expected) { throw "checksum mismatch" }
 
@@ -533,6 +535,12 @@ Releases are built by CI. Merge the work into the release branch, then tag it:
 
 ```bash
 git tag v1.2.3 && git push origin v1.2.3
+```
+
+Then point the download links in this README at the new version (the commands below the table already find the latest one by themselves):
+
+```bash
+make readme-links VERSION=v1.2.3
 ```
 
 The `release` workflow runs vet and the tests, builds the six archives with `scripts/release.sh`, starts the Linux, macOS and Windows binaries as a smoke test, and publishes the GitHub Release with `checksums.txt` and generated notes. A tag with a suffix (`v1.2.3-rc1`) is published as a pre-release.
