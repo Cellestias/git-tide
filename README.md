@@ -212,6 +212,33 @@ tide review https://github.com/acme/tool/pull/123
 
 Return to your previous branch with `git switch <branch>`.
 
+### `tide commit` and `tide save`
+
+`tide commit` commits what is staged. `tide save` stages and commits in one step: the files you name with `-f`, or every change when you give none.
+
+```bash
+tide commit -m "feat(auth): add login form"
+tide commit --type feat --scope auth -m "add login form"   # builds "feat(auth): add login form"
+tide commit -a -m "fix: handle empty token"                # also stages tracked changes
+
+tide save -m "feat: add login form"                       # every change, new files included
+tide save -m "feat(auth): add login form" -f src/auth/login_form.tsx
+tide save --type fix -m "handle empty token" -f api/token.go -f api/token_test.go
+tide save -m "docs: update readme" -f docs/                # a directory stages everything under it
+```
+
+| Flag | Effect |
+|---|---|
+| `-m, --message` | The commit message (required). |
+| `--type`, `--scope` | Build `type(scope): message` from `-m`. `--scope` needs `--type`. |
+| `--body` | Commit body, after a blank line. |
+| `-a, --all` | `tide commit` only: stage modifications and deletions of tracked files first. Untracked files are never added. |
+| `-f, --file` | `tide save` only, repeatable: stage only this file or directory. Without it, every change is staged. Paths are relative to where you run the command and must be inside the repository. |
+
+Before anything is committed, Tide checks that the branch is not protected, that the message follows your Conventional Commits rules, and that the staged lines hold no likely secrets (the same checks as the hooks, with friendlier errors). Your Git hooks still run, and Tide never uses `--no-verify`.
+
+`tide save` without `-f` is like `git add --all`: modified, deleted, and new files that `.gitignore` does not exclude. Tide lists what it staged before committing, and the secret scan covers new files too. With `-f` it refuses when other files are already staged, so the commit holds exactly the files you named. If a check fails after staging, Tide restores the index and nothing stays staged. It also refuses during a merge or rebase, where plain `git commit` is the right tool.
+
 ### `tide push`
 
 Pushes the current branch to the configured remote under the same name and sets it as upstream.
@@ -325,13 +352,15 @@ For a one-off exception, pass the base explicitly: `tide update main` or `tide p
 
 | Hook | Rejects |
 |---|---|
-| `pre-commit` | A commit on a protected branch, or staged changes containing a likely secret. |
+| `pre-commit` | A commit on a protected branch, staged changes containing a likely secret, or leftover merge conflict markers. |
 | `commit-msg` | A message that is not a Conventional Commit. |
 | `pre-push` | A push that updates or deletes a protected branch on the remote. |
 
 **Commit messages** must look like `type(scope)!: description`, where the scope and `!` are optional. Accepted types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. Messages Git generates itself (`Merge ...`, `Revert "..."`, `fixup!`, `squash!`, `amend!`) are accepted. A rejection explains why and shows a valid example.
 
 **Secret scanning** inspects only the lines you add. Built-in detectors cover AWS access key IDs, GitHub tokens, Slack tokens, Stripe live keys, Google API keys, and private key headers; add your own with `secrets.custom_patterns`. Findings show the file, line, and rule name, never the matched value. For a false positive, put `tide:allow-secret` on that line.
+
+**Conflict markers**: added lines that start with `<<<<<<<` or `>>>>>>>` (what Git writes into a file on a conflict) block the commit, so an unresolved conflict cannot slip into history. This check is always on, also when `secrets.enabled` is false. `=======` alone is not flagged, since it is a common heading underline. For content that really contains a marker, put `tide:allow-conflict-marker` on that line. `tide commit` and `tide save` apply the same check.
 
 **Protected branches** stop direct commits and pushes, nudging the team to work on branches and merge through Pull Requests. Commits made while HEAD is detached (for example during a rebase) are not blocked.
 
