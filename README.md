@@ -214,13 +214,14 @@ Return to your previous branch with `git switch <branch>`.
 
 ### `tide commit` and `tide save`
 
-`tide commit` commits what is staged. `tide save` stages the files you name and commits them in one step.
+`tide commit` commits what is staged. `tide save` stages and commits in one step: the files you name with `-f`, or every change when you give none.
 
 ```bash
 tide commit -m "feat(auth): add login form"
 tide commit --type feat --scope auth -m "add login form"   # builds "feat(auth): add login form"
 tide commit -a -m "fix: handle empty token"                # also stages tracked changes
 
+tide save -m "feat: add login form"                       # every change, new files included
 tide save -m "feat(auth): add login form" -f src/auth/login_form.tsx
 tide save --type fix -m "handle empty token" -f api/token.go -f api/token_test.go
 tide save -m "docs: update readme" -f docs/                # a directory stages everything under it
@@ -232,11 +233,11 @@ tide save -m "docs: update readme" -f docs/                # a directory stages 
 | `--type`, `--scope` | Build `type(scope): message` from `-m`. `--scope` needs `--type`. |
 | `--body` | Commit body, after a blank line. |
 | `-a, --all` | `tide commit` only: stage modifications and deletions of tracked files first. Untracked files are never added. |
-| `-f, --file` | `tide save` only, required, repeatable: file or directory to stage. Paths are relative to where you run the command and must be inside the repository. |
+| `-f, --file` | `tide save` only, repeatable: stage only this file or directory. Without it, every change is staged. Paths are relative to where you run the command and must be inside the repository. |
 
 Before anything is committed, Tide checks that the branch is not protected, that the message follows your Conventional Commits rules, and that the staged lines hold no likely secrets (the same checks as the hooks, with friendlier errors). Your Git hooks still run, and Tide never uses `--no-verify`.
 
-`tide save` refuses when other files are already staged, so the commit holds exactly the files you named. If a check fails after staging, Tide restores the index and nothing stays staged. It also refuses during a merge or rebase, where plain `git commit` is the right tool.
+`tide save` without `-f` is like `git add --all`: modified, deleted, and new files that `.gitignore` does not exclude. Tide lists what it staged before committing, and the secret scan covers new files too. With `-f` it refuses when other files are already staged, so the commit holds exactly the files you named. If a check fails after staging, Tide restores the index and nothing stays staged. It also refuses during a merge or rebase, where plain `git commit` is the right tool.
 
 ### `tide push`
 

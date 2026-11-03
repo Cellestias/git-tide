@@ -33,6 +33,13 @@ func (r *Repository) StageTracked(ctx context.Context) error {
 	return err
 }
 
+// StageAll stages every change: modifications, deletions, and new files that
+// .gitignore does not exclude.
+func (r *Repository) StageAll(ctx context.Context) error {
+	_, err := r.git(ctx, "add", "--all")
+	return err
+}
+
 // IndexSnapshot saves the current index as a tree object, for RestoreIndex.
 func (r *Repository) IndexSnapshot(ctx context.Context) (string, error) {
 	out, err := r.git(ctx, "write-tree")

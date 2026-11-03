@@ -217,3 +217,47 @@ func TestSaveRefusesDuringMerge(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestSaveWithoutFilesStagesEverything(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.WriteFile(t, dir, "mod.txt", "1\n")
+	testutil.WriteFile(t, dir, "gone.txt", "g\n")
+	testutil.Run(t, dir, "add", "mod.txt", "gone.txt")
+	testutil.Commit(t, dir, "feat: seed")
+	testutil.WriteFile(t, dir, "mod.txt", "2\n")
+	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, dir, "new/file.txt", "n\n")
+	testutil.WriteFile(t, dir, ".gitignore", "ignored.log\n")
+	testutil.WriteFile(t, dir, "ignored.log", "noise\n")
+
+	out, err := run(repo, dir, Options{Message: "feat: save all", Everything: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := testutil.Run(t, dir, "show", "--name-only", "--format=", "HEAD")
+	for _, want := range []string{"mod.txt", "gone.txt", "new/file.txt", ".gitignore"} {
+		if !strings.Contains(files, want) {
+			t.Errorf("%s missing from commit:\n%s", want, files)
+		}
+	}
+	if strings.Contains(files, "ignored.log") {
+		t.Error("ignored file was committed")
+	}
+	if !strings.Contains(out, "new/file.txt") {
+		t.Errorf("staged list not shown:\n%s", out)
+	}
+}
+
+func TestSaveEverythingSecretUndoesStaging(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.WriteFile(t, dir, "ok.txt", "fine\n")
+	testutil.WriteFile(t, dir, "cfg.env", "token = "+"ghp_"+strings.Repeat("a", 36)+"\n")
+	if _, err := run(repo, dir, Options{Message: "feat: all", Everything: true}); apperr.CodeOf(err) != apperr.CodePolicy {
+		t.Fatalf("err = %v", err)
+	}
+	if staged(t, dir) != "" {
+		t.Errorf("nothing may stay staged; staged=%q", staged(t, dir))
+	}
+}

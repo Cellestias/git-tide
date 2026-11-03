@@ -29,6 +29,8 @@ type Options struct {
 	Cwd   string
 	// All stages modifications and deletions of tracked files (`tide commit -a`).
 	All bool
+	// Everything stages every change, new files included (`tide save` without -f).
+	Everything bool
 }
 
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, opts Options, p output.Printer) error {
@@ -72,15 +74,18 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		}
 	}
 
-	staging := len(paths) > 0 || opts.All
+	staging := len(paths) > 0 || opts.All || opts.Everything
 	var snapshot string
 	if staging {
 		if snapshot, err = repo.IndexSnapshot(ctx); err != nil {
 			return apperr.Wrap(apperr.CodeExternal, "cannot snapshot the index", "", err)
 		}
-		if len(paths) > 0 {
+		switch {
+		case len(paths) > 0:
 			err = repo.StageFiles(ctx, paths)
-		} else {
+		case opts.Everything:
+			err = repo.StageAll(ctx)
+		default:
 			err = repo.StageTracked(ctx)
 		}
 		if err != nil {
@@ -102,6 +107,9 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		return apperr.New(apperr.CodeUnsafeRepo, "nothing to commit", hint)
 	}
 
+	if opts.Everything {
+		p.Note("staged %d file(s): %s", len(staged), list(staged))
+	}
 	if err := hooks.PreCommit(ctx, repo, cfg); err != nil {
 		if staging {
 			undo(ctx, repo, snapshot, p)

@@ -386,9 +386,6 @@ func TestSaveAndCommitEndToEnd(t *testing.T) {
 	}
 
 	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/a")
-	if out, code := tide(t, dir, "save", "-m", "feat: add a"); code != 2 {
-		t.Fatalf("save without -f: %d\n%s", code, out)
-	}
 	if out, code := tide(t, dir, "save", "-m", "added a", "-f", "a.txt"); code != 4 {
 		t.Fatalf("invalid message: %d\n%s", code, out)
 	}
@@ -398,6 +395,11 @@ func TestSaveAndCommitEndToEnd(t *testing.T) {
 	}
 	if got := testutil.Run(t, dir, "log", "-1", "--format=%s"); got != "feat(a): add a" {
 		t.Errorf("subject = %q", got)
+	}
+
+	testutil.WriteFile(t, dir, "b.txt", "b\n")
+	if out, code := tide(t, dir, "save", "-m", "feat: add b"); code != 0 || !strings.Contains(out, "b.txt") {
+		t.Fatalf("save without -f: %d\n%s", code, out)
 	}
 
 	testutil.WriteFile(t, dir, "a.txt", "changed\n")

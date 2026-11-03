@@ -267,28 +267,28 @@ func (e *env) saveCmd() *cobra.Command {
 	var opts appcommit.Options
 	cmd := &cobra.Command{
 		Use:   "save",
-		Short: "Stage the given files and commit them in one step",
-		Long: "Stage the files given with -f and commit them. Equivalent to `git add <files>` followed by `tide commit`.\n" +
-			"Refuses if other files are already staged, so the commit holds exactly what you named. If a check fails,\n" +
-			"the index is restored and nothing stays staged.",
-		Example: "  tide save -m \"feat(auth): add login form\" -f src/auth/login_form.tsx\n" +
+		Short: "Stage changes and commit them in one step",
+		Long: "Stage and commit in one step. With -f, only the files you name are staged (like `git add <files>`) and Tide refuses\n" +
+			"if other files are already staged. Without -f, every change is staged (like `git add --all`: modified, deleted and\n" +
+			"new files that .gitignore does not exclude) and the staged list is shown. If a check fails, the index is restored\n" +
+			"and nothing stays staged.",
+		Example: "  tide save -m \"feat: add login form\"                  # everything that changed\n" +
+			"  tide save -m \"feat(auth): add login form\" -f src/auth/login_form.tsx\n" +
 			"  tide save --type fix -m \"handle empty token\" -f api/token.go -f api/token_test.go\n" +
 			"  tide save -m \"docs: update readme\" -f docs/   # a directory stages everything under it",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if len(opts.Files) == 0 {
-				return apperr.Usage("name at least one file with -f; to commit what is already staged use `tide commit`")
-			}
 			repo, cfg, err := e.requireConfig(cmd.Context())
 			if err != nil {
 				return err
 			}
+			opts.Everything = len(opts.Files) == 0
 			opts.Cwd = e.dir
 			return appcommit.Run(cmd.Context(), repo, cfg, opts, e.p)
 		},
 	}
 	messageFlags(cmd, &opts)
-	cmd.Flags().StringArrayVarP(&opts.Files, "file", "f", nil, "file or directory to stage and commit (repeatable)")
+	cmd.Flags().StringArrayVarP(&opts.Files, "file", "f", nil, "stage only this file or directory (repeatable); default: every change")
 	return cmd
 }
 
