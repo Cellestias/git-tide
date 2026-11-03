@@ -410,3 +410,39 @@ func TestSaveAndCommitEndToEnd(t *testing.T) {
 		t.Fatalf("commit -a: %d\n%s", code, out)
 	}
 }
+
+func TestContinueAndAbortEndToEnd(t *testing.T) {
+	dir := testutil.NewRepo(t)
+	if out, code := tide(t, dir, "init", "--no-hooks"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	if out, code := tide(t, dir, "continue"); code != 6 {
+		t.Fatalf("continue with nothing in progress: %d\n%s", code, out)
+	}
+	testutil.WriteFile(t, dir, "f.txt", "base\n")
+	testutil.Commit(t, dir, "feat: base")
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/b")
+	testutil.WriteFile(t, dir, "f.txt", "from b\n")
+	testutil.Commit(t, dir, "feat: b")
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/a", "main")
+	testutil.WriteFile(t, dir, "f.txt", "from a\n")
+	testutil.Commit(t, dir, "feat: a")
+
+	git(t, dir, "merge", "--no-edit", "feature/b") // conflicts
+	if out, code := tide(t, dir, "continue"); code != 6 || !strings.Contains(out, "f.txt") {
+		t.Fatalf("continue with conflicts left: %d\n%s", code, out)
+	}
+	if out, code := tide(t, dir, "abort", "--yes"); code != 0 {
+		t.Fatalf("abort: %d\n%s", code, out)
+	}
+	if _, code := git(t, dir, "rev-parse", "-q", "--verify", "MERGE_HEAD"); code == 0 {
+		t.Error("merge still in progress after abort")
+	}
+
+	git(t, dir, "merge", "--no-edit", "feature/b") // conflicts again
+	testutil.WriteFile(t, dir, "f.txt", "resolved\n")
+	testutil.Run(t, dir, "add", "f.txt")
+	if out, code := tide(t, dir, "continue"); code != 0 || !strings.Contains(out, "Finished the merge") {
+		t.Fatalf("continue: %d\n%s", code, out)
+	}
+}
