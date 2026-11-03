@@ -31,7 +31,8 @@ fi
 for target in $targets; do
 	os=${target%/*}
 	arch=${target#*/}
-	name=tide_${version}_${os}_${arch}
+	# No version in the file name, so .../releases/latest/download/<name> is a stable link.
+	name=tide_${os}_${arch}
 	stage=$dist/$name
 	exe=tide
 	[ "$os" = windows ] && exe=tide.exe

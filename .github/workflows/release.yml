@@ -49,24 +49,24 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          tar -xzf dist/tide_${GITHUB_REF_NAME}_linux_amd64.tar.gz -C dist
-          out=$(dist/tide_${GITHUB_REF_NAME}_linux_amd64/tide --version)
+          tar -xzf dist/tide_linux_amd64.tar.gz -C dist
+          out=$(dist/tide_linux_amd64/tide --version)
           echo "$out"
           test "$out" = "tide version $GITHUB_REF_NAME"
       - name: Run the binary (macOS)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          tar -xzf dist/tide_${GITHUB_REF_NAME}_darwin_arm64.tar.gz -C dist
-          out=$(dist/tide_${GITHUB_REF_NAME}_darwin_arm64/tide --version)
+          tar -xzf dist/tide_darwin_arm64.tar.gz -C dist
+          out=$(dist/tide_darwin_arm64/tide --version)
           echo "$out"
           test "$out" = "tide version $GITHUB_REF_NAME"
       - name: Run the binary (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          unzip -q dist/tide_${GITHUB_REF_NAME}_windows_amd64.zip -d dist
-          out=$(dist/tide_${GITHUB_REF_NAME}_windows_amd64/tide.exe --version)
+          unzip -q dist/tide_windows_amd64.zip -d dist
+          out=$(dist/tide_windows_amd64/tide.exe --version)
           echo "$out"
           test "$out" = "tide version $GITHUB_REF_NAME"
 
