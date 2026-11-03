@@ -44,7 +44,7 @@ func (r Rules) Validate(raw string) error {
 		return fmt.Errorf("unknown type %q; use one of: %s", m[1], strings.Join(Types, ", "))
 	}
 	if r.RequireScope && m[2] == "" {
-		return fmt.Errorf("a scope is required: %s(<scope>): ...", m[1])
+		return fmt.Errorf("a scope is required, for example %s(<scope>): description", m[1])
 	}
 	return nil
 }

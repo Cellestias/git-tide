@@ -130,7 +130,7 @@ func checkBaseURL(base string) error {
 		return fmt.Errorf("invalid GitHub API URL %q", base)
 	}
 	loopback := u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"
-	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
+	if u.Scheme != "https" && (u.Scheme != "http" || !loopback) {
 		return fmt.Errorf("GitHub API URL must use https")
 	}
 	return nil
@@ -205,25 +205,25 @@ func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte
 	if err != nil {
 		return nil, fmt.Errorf("request GitHub API: %w", redactURLErr(err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read GitHub API response: %w", err)
 	}
 
-	switch {
-	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated:
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated:
 		return body, nil
-	case resp.StatusCode == http.StatusNotFound:
+	case http.StatusNotFound:
 		return nil, ErrNotFound
-	case resp.StatusCode == http.StatusUnauthorized:
+	case http.StatusUnauthorized:
 		return nil, fmt.Errorf("GitHub rejected the token (401); check GITHUB_TOKEN")
-	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
+	case http.StatusForbidden, http.StatusTooManyRequests:
 		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
 			return nil, fmt.Errorf("GitHub API rate limit exceeded; set GITHUB_TOKEN or retry later")
 		}
 		return nil, fmt.Errorf("GitHub denied access (%d); check token permissions", resp.StatusCode)
-	case resp.StatusCode == http.StatusUnprocessableEntity:
+	case http.StatusUnprocessableEntity:
 		return nil, &ErrValidation{Message: validationMessage(body)}
 	default:
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
@@ -393,7 +393,7 @@ func RepoFromRemote(ctx context.Context, r remoteReader, remote string) (Repo, e
 			return repo, nil
 		}
 	}
-	return Repo{}, fmt.Errorf("%w: %v", ErrUnsupportedRemote, perr)
+	return Repo{}, fmt.Errorf("%w: %w", ErrUnsupportedRemote, perr)
 }
 
 // redactURLErr drops the URL from *url.Error so it cannot leak into output.

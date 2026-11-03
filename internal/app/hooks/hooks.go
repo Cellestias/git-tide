@@ -87,7 +87,7 @@ func CommitMsg(cfg domain.Config, file string) error {
 	if err != nil {
 		return apperr.Wrap(apperr.CodeGeneral, "cannot read commit message file", "", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, maxMessageSize))
 	if err != nil {
 		return apperr.Wrap(apperr.CodeGeneral, "cannot read commit message file", "", err)

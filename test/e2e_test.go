@@ -4,6 +4,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,7 +65,8 @@ func runEnv(t *testing.T, dir string, extra []string, stdin, bin string, args ..
 	cmd.Stdout, cmd.Stderr = &buf, &buf
 	err := cmd.Run()
 	code := 0
-	if ee, ok := err.(*exec.ExitError); ok {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	} else if err != nil {
 		t.Fatal(err)
