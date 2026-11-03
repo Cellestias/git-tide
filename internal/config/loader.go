@@ -43,7 +43,7 @@ func Load(repoRoot string) (Result, error) {
 	if err != nil {
 		return res, apperr.Wrap(apperr.CodeConfig, "cannot read "+path, "", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
 	if err != nil {

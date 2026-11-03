@@ -463,7 +463,7 @@ func (e *env) configShow(cmd *cobra.Command) error {
 		src = "defaults (" + config.FileName + " not found)"
 	}
 	e.p.Line("# source: %s", src)
-	fmt.Fprint(e.p.Out, string(out))
+	_, _ = fmt.Fprint(e.p.Out, string(out))
 	return nil
 }
 

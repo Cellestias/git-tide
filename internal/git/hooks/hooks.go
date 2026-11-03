@@ -133,7 +133,7 @@ func isTideHook(data []byte) bool {
 // Install writes every managed hook into dir. Existing foreign hooks are
 // preserved by renaming; an existing chain target is never overwritten.
 func Install(dir string) ([]Change, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // hook directories are shared with Git and must be traversable
 		return nil, fmt.Errorf("create hooks directory: %w", err)
 	}
 	var changes []Change
@@ -183,15 +183,15 @@ func writeAtomic(path string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	defer os.Remove(tmp.Name()) // no-op after a successful rename
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after a successful rename
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	if err := os.Chmod(tmp.Name(), 0o755); err != nil {
+	if err := os.Chmod(tmp.Name(), 0o755); err != nil { //nolint:gosec // a hook must be executable
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {

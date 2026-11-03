@@ -35,7 +35,7 @@ type env struct {
 func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
 	dir, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(errOut, "✗ cannot determine working directory:", err)
+		_, _ = fmt.Fprintln(errOut, "✗ cannot determine working directory:", err)
 		return apperr.CodeGeneral
 	}
 	e := &env{ex: executor.Exec{}, in: in, p: output.Printer{Out: out, Err: errOut}, dir: dir}
@@ -58,7 +58,7 @@ func (e *env) run(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	e.p.Fail("%s", err)
 	if h := apperr.HintOf(err); h != "" {
-		fmt.Fprintf(errOut, "  hint: %s\n", h)
+		_, _ = fmt.Fprintf(errOut, "  hint: %s\n", h)
 	}
 	return apperr.CodeOf(err)
 }
@@ -134,7 +134,7 @@ type hookCtx struct {
 // confirm asks a yes/no question on the error stream and reads the answer from
 // stdin. Anything but "y"/"yes" (including EOF) is a no.
 func (e *env) confirm(prompt string) (bool, error) {
-	fmt.Fprint(e.p.Err, prompt)
+	_, _ = fmt.Fprint(e.p.Err, prompt)
 	line, err := bufio.NewReader(e.in).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err

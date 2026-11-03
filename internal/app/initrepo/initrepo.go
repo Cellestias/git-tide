@@ -86,7 +86,7 @@ func Run(ctx context.Context, repo *repository.Repository, opts Options) (Result
 		res.Base = base
 		content := fmt.Sprintf(configTemplate, base)
 		// O_EXCL: never clobber a file created between Load and here.
-		f, err := os.OpenFile(res.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		f, err := os.OpenFile(res.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644) //nolint:gosec // .tide.yml is a committed project file and must be readable by the team
 		if err != nil {
 			return res, apperr.Wrap(apperr.CodeGeneral, "cannot create "+res.ConfigPath, "", err)
 		}

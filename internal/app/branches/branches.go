@@ -257,7 +257,7 @@ func render(p output.Printer, rows []row, gh *githubInfo, now time.Time) {
 	if gh != nil {
 		header += "\tGITHUB"
 	}
-	fmt.Fprintln(tw, header)
+	_, _ = fmt.Fprintln(tw, header)
 	for _, r := range rows {
 		marker := "  "
 		if r.ref.Current {
@@ -269,9 +269,9 @@ func render(p output.Printer, rows []row, gh *githubInfo, now time.Time) {
 		if gh != nil {
 			line += "\t" + gh.cell(r)
 		}
-		fmt.Fprintln(tw, line)
+		_, _ = fmt.Fprintln(tw, line)
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func upstreamCell(r row) string {
