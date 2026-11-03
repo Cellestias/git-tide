@@ -33,30 +33,30 @@ Tide needs Git 2.30 or newer on your `PATH`. Nothing else: the release binaries 
 
 ### Download a release
 
-Every version is published on the [Releases page](https://github.com/Cellestias/git-tide/releases) with one archive per system, plus `checksums.txt`. Archive names are `tide_<version>_<os>_<arch>`:
+Pick your system. Each link always points to the latest release (all versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases), with `checksums.txt` to verify the download):
 
-| System | Archive |
+| System | Download |
 |---|---|
-| macOS, Apple Silicon (M1 and newer) | `tide_<version>_darwin_arm64.tar.gz` |
-| macOS, Intel | `tide_<version>_darwin_amd64.tar.gz` |
-| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | `tide_<version>_linux_amd64.tar.gz` |
-| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | `tide_<version>_linux_arm64.tar.gz` |
-| Windows, x86-64 | `tide_<version>_windows_amd64.zip` |
-| Windows, ARM64 | `tide_<version>_windows_arm64.zip` |
+| macOS, Apple Silicon (M1 and newer) | [tide_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_darwin_arm64.tar.gz) |
+| macOS, Intel | [tide_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_darwin_amd64.tar.gz) |
+| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [tide_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_linux_amd64.tar.gz) |
+| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [tide_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/latest/download/tide_linux_arm64.tar.gz) |
+| Windows, x86-64 | [tide_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/latest/download/tide_windows_amd64.zip) |
+| Windows, ARM64 | [tide_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/latest/download/tide_windows_arm64.zip) |
+| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/latest/download/checksums.txt) |
 
 **macOS and Linux**
 
-This downloads the latest release for your system, verifies it against `checksums.txt`, and installs it:
+This downloads the right archive for your system, verifies it against `checksums.txt`, and installs it:
 
 ```bash
-repo=https://github.com/Cellestias/git-tide
-version=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$repo/releases/latest" | sed 's#.*/##')
+url=https://github.com/Cellestias/git-tide/releases/latest/download
 os=$(uname -s | tr '[:upper:]' '[:lower:]')                       # linux or darwin
 case $(uname -m) in x86_64 | amd64) arch=amd64 ;; arm64 | aarch64) arch=arm64 ;; *) echo "unsupported CPU: $(uname -m)" >&2 ;; esac
-name=tide_${version}_${os}_${arch}
+name=tide_${os}_${arch}
 
-curl -fsSLO "$repo/releases/download/$version/$name.tar.gz"
-curl -fsSLO "$repo/releases/download/$version/checksums.txt"
+curl -fsSLO "$url/$name.tar.gz"
+curl -fsSLO "$url/checksums.txt"
 grep " $name.tar.gz\$" checksums.txt | { sha256sum -c - 2>/dev/null || shasum -a 256 -c -; }   # must print: OK
 tar -xzf "$name.tar.gz"
 sudo install -m 755 "$name/tide" /usr/local/bin/tide
@@ -67,15 +67,14 @@ If you downloaded the archive with a browser on macOS, Gatekeeper may block the 
 
 **Windows (PowerShell)**
 
-Set `$version` to the latest tag shown on the Releases page, and use `arm64` instead of `amd64` on an ARM PC:
+Use `arm64` instead of `amd64` on an ARM PC:
 
 ```powershell
-$repo = "https://github.com/Cellestias/git-tide"
-$version = "v1.0.0"
-$name = "tide_${version}_windows_amd64"
+$url = "https://github.com/Cellestias/git-tide/releases/latest/download"
+$name = "tide_windows_amd64"
 
-Invoke-WebRequest "$repo/releases/download/$version/$name.zip" -OutFile "$name.zip"
-Invoke-WebRequest "$repo/releases/download/$version/checksums.txt" -OutFile checksums.txt
+Invoke-WebRequest "$url/$name.zip" -OutFile "$name.zip"
+Invoke-WebRequest "$url/checksums.txt" -OutFile checksums.txt
 $expected = ((Select-String -Path checksums.txt -Pattern "$name.zip").Line -split "\s+")[0]
 if ((Get-FileHash "$name.zip" -Algorithm SHA256).Hash -ne $expected) { throw "checksum mismatch" }
 
