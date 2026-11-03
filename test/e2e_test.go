@@ -446,3 +446,46 @@ func TestContinueAndAbortEndToEnd(t *testing.T) {
 		t.Fatalf("continue: %d\n%s", code, out)
 	}
 }
+
+func TestPRTokenFromDotenv(t *testing.T) {
+	var auth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"number":7,"html_url":"https://github.com/acme/tool/pull/7"}`))
+	}))
+	defer srv.Close()
+	noToken := []string{"TIDE_GITHUB_API_URL=" + srv.URL, "GITHUB_TOKEN=", "GH_TOKEN="}
+
+	dir, bare := testutil.NewRepoWithRemote(t)
+	testutil.Run(t, dir, "remote", "set-url", "origin", "https://github.com/acme/tool.git")
+	testutil.Run(t, dir, "config", "url."+bare+".insteadOf", "https://github.com/acme/tool.git")
+	if out, code := tide(t, dir, "init"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	git(t, dir, "checkout", "-q", "-b", "feature/pay")
+	testutil.WriteFile(t, dir, "pay.txt", "p\n")
+	git(t, dir, "add", "pay.txt")
+	git(t, dir, "commit", "-q", "-m", "feat: add pay")
+	bin := filepath.Join(binDir, "tide")
+
+	// a tracked .env is never used
+	testutil.WriteFile(t, dir, ".env", "GITHUB_TOKEN=from-dotenv\n")
+	git(t, dir, "add", "-f", ".env")
+	git(t, dir, "commit", "-q", "-m", "chore: oops")
+	out, code := runEnv(t, dir, noToken, "", bin, "pr", "--yes")
+	if code != 3 || !strings.Contains(out, "tracked by Git") || strings.Contains(out, "from-dotenv") {
+		t.Fatalf("tracked .env: %d\n%s", code, out)
+	}
+	git(t, dir, "rm", "-q", "--cached", ".env")
+	git(t, dir, "commit", "-q", "-m", "chore: untrack env")
+	testutil.WriteFile(t, dir, ".gitignore", ".env\n")
+	git(t, dir, "add", ".gitignore")
+	git(t, dir, "commit", "-q", "-m", "chore: ignore env")
+
+	// an ignored .env supplies the token
+	out, code = runEnv(t, dir, noToken, "", bin, "pr", "--yes")
+	if code != 0 || auth != "Bearer from-dotenv" {
+		t.Fatalf("dotenv token: %d auth=%q\n%s", code, auth, out)
+	}
+}

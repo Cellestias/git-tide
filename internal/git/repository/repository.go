@@ -438,3 +438,28 @@ func (r *Repository) PreviousBranch(ctx context.Context) string {
 	}
 	return name
 }
+
+// IsTracked reports whether path (relative to the repository root) is tracked by Git.
+func (r *Repository) IsTracked(ctx context.Context, path string) (bool, error) {
+	_, err := r.git(ctx, "--literal-pathspecs", "ls-files", "--error-unmatch", "--", path)
+	if err == nil {
+		return true, nil
+	}
+	if executor.ExitCode(err) == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// IsIgnored reports whether Git's ignore rules cover path (relative to the repository
+// root). check-ignore rejects --literal-pathspecs, so pass plain file names only.
+func (r *Repository) IsIgnored(ctx context.Context, path string) (bool, error) {
+	_, err := r.git(ctx, "check-ignore", "-q", "--", path)
+	if err == nil {
+		return true, nil
+	}
+	if executor.ExitCode(err) == 1 {
+		return false, nil
+	}
+	return false, err
+}
