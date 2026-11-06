@@ -35,6 +35,24 @@ Tide needs Git 2.30 or newer on your `PATH`. Nothing else: the release binaries 
 
 The command is **`gtide`**, because another well-known tool already uses the name `tide`. Each release archive also contains a copy named `tide` (`tide.exe` on Windows) if you prefer the short name; install it only when nothing else on your machine is called `tide`. Everything in this README works the same with either name, and `gtide` is the one the Git hooks call.
 
+### Quick install
+
+One command downloads the latest release, verifies its checksum, and installs `gtide` and the `tide` alias. It uses `curl` / PowerShell, so macOS does not quarantine the binary and you do not hit the Gatekeeper warning.
+
+**macOS and Linux**
+
+```bash
+curl -fsSL https://github.com/Cellestias/git-tide/releases/latest/download/install.sh | sh
+```
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://github.com/Cellestias/git-tide/releases/latest/download/install.ps1 | iex
+```
+
+Options are environment variables: `GTIDE_VERSION=v1.1.0` to pick a release, `GTIDE_BIN_DIR` (`GTIDE_INSTALL_DIR` on Windows) to choose the folder, and `GTIDE_NO_ALIAS=1` to skip `tide`. An existing `tide` that is a different program is never overwritten. The scripts are [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1); read them before piping anything to a shell.
+
 ### Download a release
 
 The links below are for **v1.1.0**, the current release. Older and newer versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases). Archive names are `gtide_<version>_<os>_<arch>`; verify a download against `checksums.txt` from the same release.
