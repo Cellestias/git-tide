@@ -1,4 +1,4 @@
-// Package push implements `tide push`: publish the current branch and set its
+// Package push implements `gtide push`: publish the current branch and set its
 // upstream, refusing protected branches.
 package push
 
@@ -65,7 +65,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		p.Step("Pushing %s to %s", current, cfg.Remote)
 		if err := repo.PushBranch(ctx, cfg.Remote, current); err != nil {
 			return apperr.Wrap(apperr.CodeExternal, "push failed",
-				"if the remote has new commits, run `tide update` first; use --force only after rewriting history", err)
+				"if the remote has new commits, run `gtide update` first; use --force only after rewriting history", err)
 		}
 	}
 	p.Success("Pushed %s to %s and set it as upstream", current, cfg.Remote)

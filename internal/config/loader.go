@@ -55,7 +55,7 @@ func Load(repoRoot string) (Result, error) {
 
 	res.Found = true
 	if err := Parse(data, &res.Config); err != nil {
-		return res, apperr.Wrap(apperr.CodeConfig, "invalid configuration in "+path, "run `tide config validate` after fixing it", err)
+		return res, apperr.Wrap(apperr.CodeConfig, "invalid configuration in "+path, "run `gtide config validate` after fixing it", err)
 	}
 	return res, nil
 }

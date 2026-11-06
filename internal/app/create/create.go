@@ -1,4 +1,4 @@
-// Package create implements `tide create`: start a new branch from an
+// Package create implements `gtide create`: start a new branch from an
 // up-to-date base.
 package create
 

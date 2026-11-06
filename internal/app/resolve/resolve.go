@@ -1,4 +1,4 @@
-// Package resolve implements `tide continue` and `tide abort`: finish or give
+// Package resolve implements `gtide continue` and `gtide abort`: finish or give
 // up a merge, rebase, cherry-pick, or revert that stopped on conflicts.
 package resolve
 
@@ -29,7 +29,7 @@ func Continue(ctx context.Context, repo *repository.Repository, cfg domain.Confi
 	}
 	if len(unmerged) > 0 {
 		return apperr.New(apperr.CodeUnsafeRepo, fmt.Sprintf("%d file(s) still have conflicts: %s", len(unmerged), list(unmerged)),
-			"edit them to remove the conflict markers, then `git add <file>` and run `tide continue` again")
+			"edit them to remove the conflict markers, then `git add <file>` and run `gtide continue` again")
 	}
 	if err := hooks.PreCommit(ctx, repo, cfg); err != nil {
 		return err
@@ -40,7 +40,7 @@ func Continue(ctx context.Context, repo *repository.Repository, cfg domain.Confi
 		if again, _ := repo.InProgressOperation(ctx); again != "" {
 			if left, _ := repo.UnmergedFiles(ctx); len(left) > 0 {
 				return apperr.New(apperr.CodeGeneral, fmt.Sprintf("the %s stopped on new conflicts: %s", op, list(left)),
-					"resolve them, `git add` the files, then `tide continue` again; or give up with `tide abort`")
+					"resolve them, `git add` the files, then `gtide continue` again; or give up with `gtide abort`")
 			}
 		}
 		return apperr.Wrap(apperr.CodeExternal, fmt.Sprintf("cannot continue the %s", op),

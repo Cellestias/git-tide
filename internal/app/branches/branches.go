@@ -1,4 +1,4 @@
-// Package branches implements `tide branch`: a table of branches enriched with
+// Package branches implements `gtide branch`: a table of branches enriched with
 // Tide's view of them (base branch, protection, staleness).
 package branches
 

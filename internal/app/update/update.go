@@ -1,4 +1,4 @@
-// Package update implements `tide update`.
+// Package update implements `gtide update`.
 package update
 
 import (
@@ -109,7 +109,7 @@ func ensureSafe(ctx context.Context, repo *repository.Repository) error {
 		if len(changes) > len(shown) {
 			msg += fmt.Sprintf(" and %d more", len(changes)-len(shown))
 		}
-		return apperr.New(apperr.CodeUnsafeRepo, msg, "commit or stash them, then re-run `tide update`")
+		return apperr.New(apperr.CodeUnsafeRepo, msg, "commit or stash them, then re-run `gtide update`")
 	}
 	return nil
 }

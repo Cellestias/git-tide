@@ -1,4 +1,4 @@
-// Package initrepo implements `tide init`.
+// Package initrepo implements `gtide init`.
 package initrepo
 
 import (
@@ -34,7 +34,7 @@ type Result struct {
 const configTemplate = `# Git Tide configuration. Docs: README.md
 version: 1
 
-# Remote used by "tide update" and "tide review".
+# Remote used by "gtide update" and "gtide review".
 remote: origin
 
 branches:

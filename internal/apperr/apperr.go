@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// Exit codes returned by the tide binary.
+// Exit codes returned by the gtide binary.
 const (
 	CodeOK         = 0
 	CodeGeneral    = 1

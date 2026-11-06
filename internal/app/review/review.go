@@ -1,4 +1,4 @@
-// Package review implements `tide review`.
+// Package review implements `gtide review`.
 package review
 
 import (

@@ -1,4 +1,4 @@
-// Package pr implements `tide pr`: push the current branch and open a GitHub
+// Package pr implements `gtide pr`: push the current branch and open a GitHub
 // Pull Request against its configured base.
 package pr
 
@@ -126,12 +126,12 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 	case errors.As(err, &verr):
 		// the message is remote-controlled: use the cleaned text, not the wrapped cause
 		return apperr.New(apperr.CodeExternal, "GitHub rejected the pull request: "+clean(verr.Message),
-			"the branch was pushed; fix the problem and re-run `tide pr`")
+			"the branch was pushed; fix the problem and re-run `gtide pr`")
 	case errors.Is(err, github.ErrNotFound):
 		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s not found or the token cannot write to it", ghRepo),
 			"GITHUB_TOKEN needs pull-request write access; the branch was pushed")
 	case err != nil:
-		return apperr.Wrap(apperr.CodeExternal, "cannot create pull request", "the branch was pushed; re-run `tide pr`", err)
+		return apperr.Wrap(apperr.CodeExternal, "cannot create pull request", "the branch was pushed; re-run `gtide pr`", err)
 	}
 	p.Success("Opened #%d: %s", created.Number, clean(created.URL))
 	return nil

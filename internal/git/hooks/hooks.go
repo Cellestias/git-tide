@@ -14,8 +14,8 @@ import (
 )
 
 // Marker identifies a hook file written by Tide. Bump the version when the
-// script changes so `tide doctor` can report outdated hooks.
-const Marker = "# tide-managed-hook v1"
+// script changes so `gtide doctor` can report outdated hooks.
+const Marker = "# tide-managed-hook v2"
 
 // ChainSuffix is appended to the name of a pre-existing hook that Tide chains to.
 const ChainSuffix = ".pre-tide"
@@ -48,25 +48,25 @@ type Change struct {
 
 var script = template.Must(template.New("hook").Parse(`#!/bin/sh
 ` + Marker + `
-# Installed by "tide init". To undo: delete this file and, if it exists,
+# Installed by "gtide init". To undo: delete this file and, if it exists,
 # rename "{{.Name}}` + ChainSuffix + `" back to "{{.Name}}".
 hook_dir=$(dirname -- "$0")
 chained="$hook_dir/{{.Name}}` + ChainSuffix + `"
 {{if .ReadsStdin}}input=$(cat)
-if command -v tide >/dev/null 2>&1; then
-  printf '%s\n' "$input" | tide hook {{.Name}} "$@" || exit $?
+if command -v gtide >/dev/null 2>&1; then
+  printf '%s\n' "$input" | gtide hook {{.Name}} "$@" || exit $?
 else
-  echo "tide: not found on PATH; skipping {{.Name}} checks" >&2
+  echo "gtide: not found on PATH; skipping {{.Name}} checks" >&2
 fi
 if [ -x "$chained" ]; then
   printf '%s\n' "$input" | "$chained" "$@"
   exit $?
 fi
 exit 0
-{{else}}if command -v tide >/dev/null 2>&1; then
-  tide hook {{.Name}} "$@" || exit $?
+{{else}}if command -v gtide >/dev/null 2>&1; then
+  gtide hook {{.Name}} "$@" || exit $?
 else
-  echo "tide: not found on PATH; skipping {{.Name}} checks" >&2
+  echo "gtide: not found on PATH; skipping {{.Name}} checks" >&2
 fi
 if [ -x "$chained" ]; then
   exec "$chained" "$@"

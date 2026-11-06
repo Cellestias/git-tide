@@ -1,4 +1,4 @@
-// Package commit implements `tide commit` and `tide save`: validate, optionally
+// Package commit implements `gtide commit` and `gtide save`: validate, optionally
 // stage, and commit, with Tide's policy checked before anything changes.
 package commit
 
@@ -23,13 +23,13 @@ type Options struct {
 	Body    string
 	Type    string // with Message, builds "type(scope): message"
 	Scope   string
-	// Files are staged first (`tide save`). Relative paths are resolved
+	// Files are staged first (`gtide save`). Relative paths are resolved
 	// against Cwd. When Files is set, nothing else may already be staged.
 	Files []string
 	Cwd   string
-	// All stages modifications and deletions of tracked files (`tide commit -a`).
+	// All stages modifications and deletions of tracked files (`gtide commit -a`).
 	All bool
-	// Everything stages every change, new files included (`tide save` without -f).
+	// Everything stages every change, new files included (`gtide save` without -f).
 	Everything bool
 }
 
@@ -38,7 +38,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		return apperr.Wrap(apperr.CodeExternal, "cannot inspect repository state", "", err)
 	} else if op != "" {
 		return apperr.New(apperr.CodeUnsafeRepo, fmt.Sprintf("a %s is in progress", op),
-			fmt.Sprintf("finish it first (git %[1]s --continue / --abort), then use tide commit", op))
+			fmt.Sprintf("finish it first (git %[1]s --continue / --abort), then use gtide commit", op))
 	}
 
 	current, err := repo.CurrentBranch(ctx)
@@ -70,7 +70,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		if other := outside(staged, paths); len(other) > 0 {
 			return apperr.New(apperr.CodeUnsafeRepo,
 				fmt.Sprintf("other files are already staged: %s", list(other)),
-				"unstage them (git restore --staged <file>) or commit them first with `tide commit`")
+				"unstage them (git restore --staged <file>) or commit them first with `gtide commit`")
 		}
 	}
 
@@ -100,7 +100,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		return apperr.Wrap(apperr.CodeExternal, "cannot inspect staged changes", "", err)
 	}
 	if len(staged) == 0 {
-		hint := "stage changes with `git add`, or use `tide save -f <file>`"
+		hint := "stage changes with `git add`, or use `gtide save -f <file>`"
 		if staging {
 			hint = "the given files have no changes"
 		}

@@ -110,14 +110,14 @@ func (e *env) changeCmd() *cobra.Command {
 		Use:     "change <branch>",
 		Aliases: []string{"switch"},
 		Short:   "Switch to another branch safely",
-		Long: "Switch to a branch. <branch> may be a partial name when it is unambiguous (`tide change two-fa`),\n" +
+		Long: "Switch to a branch. <branch> may be a partial name when it is unambiguous (`gtide change two-fa`),\n" +
 			"or - for the previous branch. A branch that only exists on the remote is created locally with its upstream.\n" +
 			"Refuses with uncommitted tracked changes unless --carry is given, and while a merge or rebase is in progress.\n" +
-			"No network call is made: remote branches are the ones already fetched (see `tide branch --remote`).",
-		Example: "  tide change feature/two-fa\n" +
-			"  tide change two-fa     # unique partial match\n" +
-			"  tide change -          # previous branch\n" +
-			"  tide change main --carry",
+			"No network call is made: remote branches are the ones already fetched (see `gtide branch --remote`).",
+		Example: "  gtide change feature/two-fa\n" +
+			"  gtide change two-fa     # unique partial match\n" +
+			"  gtide change -          # previous branch\n" +
+			"  gtide change main --carry",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
@@ -145,11 +145,11 @@ func (e *env) branchCmd() *cobra.Command {
 			"the base branch from .tide.yml, and whether they are protected or already merged.\n" +
 			"Local data only by default; --remote and --github add network calls.\n" +
 			"The author is the author of the last commit: Git does not record who created a branch.",
-		Example: "  tide branch\n" +
-			"  tide branch --remote --github     # include remote-only branches, GitHub protection and open PRs\n" +
-			"  tide branch --mine --sort name\n" +
-			"  tide branch --merged              # candidates for cleanup\n" +
-			"  tide branch --stale 30",
+		Example: "  gtide branch\n" +
+			"  gtide branch --remote --github     # include remote-only branches, GitHub protection and open PRs\n" +
+			"  gtide branch --mine --sort name\n" +
+			"  gtide branch --merged              # candidates for cleanup\n" +
+			"  gtide branch --stale 30",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
@@ -185,11 +185,11 @@ func (e *env) createCmd() *cobra.Command {
 		Short: "Create a branch from an up-to-date base",
 		Long: "Create <branch> from the freshly fetched base branch (resolved from .tide.yml, or --from) and switch to it.\n" +
 			"The new branch has no upstream unless you use --track or --push.",
-		Example: "  tide create feature/two-fa                  # from the configured base, fetched first\n" +
-			"  tide create feature/two-fa --from release/1  # from another branch, tag, or commit\n" +
-			"  tide create feature/two-fa --local           # no network: use the local base\n" +
-			"  tide create feature/two-fa --track           # check out a branch that exists on the remote\n" +
-			"  tide create feature/two-fa --push            # also push and set the upstream",
+		Example: "  gtide create feature/two-fa                  # from the configured base, fetched first\n" +
+			"  gtide create feature/two-fa --from release/1  # from another branch, tag, or commit\n" +
+			"  gtide create feature/two-fa --local           # no network: use the local base\n" +
+			"  gtide create feature/two-fa --track           # check out a branch that exists on the remote\n" +
+			"  gtide create feature/two-fa --push            # also push and set the upstream",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
@@ -218,8 +218,8 @@ func (e *env) pushCmd() *cobra.Command {
 		Short: "Push the current branch and set its upstream",
 		Long: "Push the current branch to the configured remote under the same name and set it as upstream.\n" +
 			"Protected branches are refused. --force uses --force-with-lease, so work you have not fetched is never overwritten.",
-		Example: "  tide push           # publish the current branch\n" +
-			"  tide push --force   # after rewriting history (rebase, amend); asks first",
+		Example: "  gtide push           # publish the current branch\n" +
+			"  gtide push --force   # after rewriting history (rebase, amend); asks first",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
@@ -244,10 +244,10 @@ func (e *env) commitCmd() *cobra.Command {
 		Short: "Commit what is staged, checking Tide's rules first",
 		Long: "Commit the staged changes. Tide checks the branch is not protected, the message follows the Conventional Commits rules,\n" +
 			"and the staged lines hold no likely secrets, then runs git commit (your hooks still run).\n" +
-			"Use `tide save` to stage specific files and commit them in one step.",
-		Example: "  tide commit -m \"feat(auth): add login form\"\n" +
-			"  tide commit --type feat --scope auth -m \"add login form\"\n" +
-			"  tide commit -a -m \"fix: handle empty token\"   # also stage tracked changes",
+			"Use `gtide save` to stage specific files and commit them in one step.",
+		Example: "  gtide commit -m \"feat(auth): add login form\"\n" +
+			"  gtide commit --type feat --scope auth -m \"add login form\"\n" +
+			"  gtide commit -a -m \"fix: handle empty token\"   # also stage tracked changes",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
@@ -272,10 +272,10 @@ func (e *env) saveCmd() *cobra.Command {
 			"if other files are already staged. Without -f, every change is staged (like `git add --all`: modified, deleted and\n" +
 			"new files that .gitignore does not exclude) and the staged list is shown. If a check fails, the index is restored\n" +
 			"and nothing stays staged.",
-		Example: "  tide save -m \"feat: add login form\"                  # everything that changed\n" +
-			"  tide save -m \"feat(auth): add login form\" -f src/auth/login_form.tsx\n" +
-			"  tide save --type fix -m \"handle empty token\" -f api/token.go -f api/token_test.go\n" +
-			"  tide save -m \"docs: update readme\" -f docs/   # a directory stages everything under it",
+		Example: "  gtide save -m \"feat: add login form\"                  # everything that changed\n" +
+			"  gtide save -m \"feat(auth): add login form\" -f src/auth/login_form.tsx\n" +
+			"  gtide save --type fix -m \"handle empty token\" -f api/token.go -f api/token_test.go\n" +
+			"  gtide save -m \"docs: update readme\" -f docs/   # a directory stages everything under it",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
@@ -306,7 +306,7 @@ func (e *env) continueCmd() *cobra.Command {
 		Short: "Finish a merge, rebase, cherry-pick or revert after resolving conflicts",
 		Long: "Continue the operation that stopped on conflicts, whichever it is. Every conflict must be resolved and staged first\n" +
 			"(`git add <file>`). Tide runs its pre-commit checks (leftover conflict markers, secrets) before continuing, and the\n" +
-			"message Git prepared is used as it is. A rebase can stop again on the next commit; run `tide continue` again then.",
+			"message Git prepared is used as it is. A rebase can stop again on the next commit; run `gtide continue` again then.",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
@@ -436,7 +436,7 @@ func (e *env) configCmd() *cobra.Command {
 				return err
 			}
 			if !res.Found {
-				return apperr.New(apperr.CodeConfig, config.FileName+" not found", "run `tide init` first")
+				return apperr.New(apperr.CodeConfig, config.FileName+" not found", "run `gtide init` first")
 			}
 			e.p.Success("%s is valid", res.Path)
 			return nil
@@ -467,7 +467,7 @@ func (e *env) configShow(cmd *cobra.Command) error {
 	return nil
 }
 
-// hookCmd is invoked by the scripts that `tide init` installs.
+// hookCmd is invoked by the scripts that `gtide init` installs.
 func (e *env) hookCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:    "hook",
