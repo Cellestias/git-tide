@@ -184,7 +184,7 @@ func TestHints(t *testing.T) {
 	testutil.Run(t, f.dir, "push", "-q", "origin", "main")
 
 	out, err := run(t, f, "feature/login", Options{})
-	if err != nil || !strings.Contains(out, "↓1 behind main: run `tide update`") {
+	if err != nil || !strings.Contains(out, "↓1 behind main: run `gtide update`") {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 

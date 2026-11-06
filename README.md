@@ -2,7 +2,7 @@
 
 > **Move with the flow.**
 
-Git Tide (`tide`) is a command-line tool that sits on top of Git and makes everyday workflows safer and more consistent for a team:
+Git Tide (`gtide`) is a command-line tool that sits on top of Git and makes everyday workflows safer and more consistent for a team:
 
 - **Update** a working branch from its base branch in one command, without risking uncommitted work.
 - **Review** a GitHub Pull Request on a predictable local branch.
@@ -31,19 +31,23 @@ Git stays the source of truth. Tide runs the Git you already have, needs no serv
 
 Tide needs Git 2.30 or newer on your `PATH`. Nothing else: the release binaries are self-contained, so you do not need Go.
 
+### The `gtide` command and the `tide` alias
+
+The command is **`gtide`**, because another well-known tool already uses the name `tide`. Each release archive also contains a copy named `tide` (`tide.exe` on Windows) if you prefer the short name; install it only when nothing else on your machine is called `tide`. Everything in this README works the same with either name, and `gtide` is the one the Git hooks call.
+
 ### Download a release
 
-The links below are for **v1.0.0**, the current release. Older and newer versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases). Archive names are `tide_<version>_<os>_<arch>`; verify a download against `checksums.txt` from the same release.
+The links below are for **v1.1.0**, the current release. Older and newer versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases). Archive names are `gtide_<version>_<os>_<arch>`; verify a download against `checksums.txt` from the same release.
 
 | System | Download |
 |---|---|
-| macOS, Apple Silicon (M1 and newer) | [tide_v1.0.0_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_darwin_arm64.tar.gz) |
-| macOS, Intel | [tide_v1.0.0_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_darwin_amd64.tar.gz) |
-| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [tide_v1.0.0_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_linux_amd64.tar.gz) |
-| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [tide_v1.0.0_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_linux_arm64.tar.gz) |
-| Windows, x86-64 | [tide_v1.0.0_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_windows_amd64.zip) |
-| Windows, ARM64 | [tide_v1.0.0_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/tide_v1.0.0_windows_arm64.zip) |
-| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/download/v1.0.0/checksums.txt) |
+| macOS, Apple Silicon (M1 and newer) | [gtide_v1.1.0_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_darwin_arm64.tar.gz) |
+| macOS, Intel | [gtide_v1.1.0_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_darwin_amd64.tar.gz) |
+| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [gtide_v1.1.0_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_linux_amd64.tar.gz) |
+| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [gtide_v1.1.0_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_linux_arm64.tar.gz) |
+| Windows, x86-64 | [gtide_v1.1.0_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_windows_amd64.zip) |
+| Windows, ARM64 | [gtide_v1.1.0_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_windows_arm64.zip) |
+| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/checksums.txt) |
 
 **macOS and Linux**
 
@@ -54,17 +58,19 @@ repo=https://github.com/Cellestias/git-tide
 version=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$repo/releases/latest" | sed 's#.*/##')
 os=$(uname -s | tr '[:upper:]' '[:lower:]')                       # linux or darwin
 case $(uname -m) in x86_64 | amd64) arch=amd64 ;; arm64 | aarch64) arch=arm64 ;; *) echo "unsupported CPU: $(uname -m)" >&2 ;; esac
-name=tide_${version}_${os}_${arch}
+name=gtide_${version}_${os}_${arch}
 
 curl -fsSLO "$repo/releases/download/$version/$name.tar.gz"
 curl -fsSLO "$repo/releases/download/$version/checksums.txt"
 grep " $name.tar.gz\$" checksums.txt | { sha256sum -c - 2>/dev/null || shasum -a 256 -c -; }   # must print: OK
 tar -xzf "$name.tar.gz"
-sudo install -m 755 "$name/tide" /usr/local/bin/tide
-tide --version
+sudo install -m 755 "$name/gtide" /usr/local/bin/gtide
+# optional short alias, only if no other `tide` is installed:
+# sudo install -m 755 "$name/tide" /usr/local/bin/tide
+gtide --version
 ```
 
-If you downloaded the archive with a browser on macOS, Gatekeeper may block the unsigned binary. Remove the quarantine flag once: `xattr -d com.apple.quarantine /usr/local/bin/tide`. Downloading with `curl`, as above, does not set it.
+If you downloaded the archive with a browser on macOS, Gatekeeper may block the unsigned binary. Remove the quarantine flag once: `xattr -d com.apple.quarantine /usr/local/bin/gtide`. Downloading with `curl`, as above, does not set it.
 
 **Windows (PowerShell)**
 
@@ -72,8 +78,8 @@ Set `$version` to the latest tag shown on the Releases page, and use `arm64` ins
 
 ```powershell
 $repo = "https://github.com/Cellestias/git-tide"
-$version = "v1.0.0"
-$name = "tide_${version}_windows_amd64"
+$version = "v1.1.0"
+$name = "gtide_${version}_windows_amd64"
 
 Invoke-WebRequest "$repo/releases/download/$version/$name.zip" -OutFile "$name.zip"
 Invoke-WebRequest "$repo/releases/download/$version/checksums.txt" -OutFile checksums.txt
@@ -81,11 +87,11 @@ $expected = ((Select-String -Path checksums.txt -Pattern "$name.zip").Line -spli
 if ((Get-FileHash "$name.zip" -Algorithm SHA256).Hash -ne $expected) { throw "checksum mismatch" }
 
 Expand-Archive "$name.zip" -DestinationPath .
-New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\tide" | Out-Null
-Copy-Item ".\$name\tide.exe" "$env:LOCALAPPDATA\Programs\tide\"
-[Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:LOCALAPPDATA\Programs\tide", "User")
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Programs\gtide" | Out-Null
+Copy-Item ".\$name\gtide.exe" "$env:LOCALAPPDATA\Programs\gtide\"
+[Environment]::SetEnvironmentVariable("Path", "$env:Path;$env:LOCALAPPDATA\Programs\gtide", "User")
 # open a new terminal, then:
-tide --version
+gtide --version
 ```
 
 Windows SmartScreen may warn about an unsigned program the first time; choose "More info", then "Run anyway". Tide's hooks are POSIX shell scripts, which [Git for Windows](https://gitforwindows.org) runs with its bundled shell, so install Git that way. Windows binaries are built and started on every release, but the full test suite runs on Linux and macOS only; treat Windows as supported on a best-effort basis and report problems.
@@ -96,42 +102,42 @@ Requires Go 1.26.10 or newer (a Go 1.21+ install downloads the right toolchain b
 
 ```bash
 git clone https://github.com/Cellestias/git-tide.git && cd git-tide
-make install                    # builds and installs to /usr/local/bin (PREFIX=~/.local to change)
-tide --version
+make install                    # installs gtide, plus a tide symlink, to /usr/local/bin (PREFIX=~/.local to change)
+gtide --version
 ```
 
-The binary must be on the `PATH` seen by Git, because the installed hooks call `tide`. If it is missing, hooks print a warning and skip their checks (see [Troubleshooting](#troubleshooting)).
+The binary must be on the `PATH` seen by Git, because the installed hooks call `gtide`. If it is missing, hooks print a warning and skip their checks (see [Troubleshooting](#troubleshooting)).
 
 ## Quick start
 
 ```bash
 cd your-repo
-tide init        # creates .tide.yml and installs the Git hooks
-tide doctor      # checks that everything is set up
+gtide init        # creates .tide.yml and installs the Git hooks
+gtide doctor      # checks that everything is set up
 ```
 
 Then, in daily use:
 
 ```bash
-tide create feature/login            # new branch from the fresh base
+gtide create feature/login            # new branch from the fresh base
 git commit -m "feat: add login form" # hooks validate the message and scan for secrets
-tide push                            # publish the branch
-tide update                          # bring the base branch into feature/login
-tide pr                              # push and open a Pull Request
+gtide push                            # publish the branch
+gtide update                          # bring the base branch into feature/login
+gtide pr                              # push and open a Pull Request
 ```
 
 Commit `.tide.yml` so the whole team shares the same rules.
 
 ## Commands
 
-Run `tide <command> --help` for the built-in help.
+Run `gtide <command> --help` for the built-in help.
 
-### `tide init`
+### `gtide init`
 
 Creates `.tide.yml` and installs the Git hooks.
 
 ```bash
-tide init [--base <branch>] [--no-hooks]
+gtide init [--base <branch>] [--no-hooks]
 ```
 
 - The default base branch is detected from `origin/HEAD`, then `main`, then `master`. Override it with `--base`.
@@ -140,33 +146,33 @@ tide init [--base <branch>] [--no-hooks]
 - Re-running `init` is safe; hooks that are already current are left alone.
 - `--no-hooks` (or `hooks.manage: false`) skips hook installation.
 
-### `tide change <branch>`
+### `gtide change <branch>`
 
-Switches to another branch safely. Alias: `tide switch`.
+Switches to another branch safely. Alias: `gtide switch`.
 
 ```bash
-tide change feature/two-fa
-tide change two-fa        # unique partial match
-tide change -             # previous branch
-tide change main --carry
+gtide change feature/two-fa
+gtide change two-fa        # unique partial match
+gtide change -             # previous branch
+gtide change main --carry
 ```
 
 - `<branch>` is an exact name, a case-insensitive part of a name that matches exactly one branch, or `-` for the previous branch. An exact name always wins over partial matches. If several branches match, Tide lists them and refuses.
 - A branch that only exists on the remote (already fetched) is created locally with its upstream set.
 - It refuses, without changing anything, while a merge or rebase is in progress, and when tracked files have uncommitted changes. Use `--carry` to let Git bring the changes along; Git still refuses if they would conflict, and nothing is lost either way. Tide never stashes for you.
-- After switching it tells you what to do next: when the branch is behind its base (`tide update`), behind its upstream (`git pull`), when its upstream was deleted, or when it is a protected branch.
-- It makes no network call. Remote branches are the ones you already fetched; refresh them with `tide branch --remote`.
+- After switching it tells you what to do next: when the branch is behind its base (`gtide update`), behind its upstream (`git pull`), when its upstream was deleted, or when it is a protected branch.
+- It makes no network call. Remote branches are the ones you already fetched; refresh them with `gtide branch --remote`.
 
-### `tide branch`
+### `gtide branch`
 
-Lists branches with Tide's view of them. Alias: `tide branches`.
+Lists branches with Tide's view of them. Alias: `gtide branches`.
 
 ```bash
-tide branch                        # local data only, works offline
-tide branch --remote --github      # + remote-only branches, GitHub protection and open PRs
-tide branch --mine --sort name
-tide branch --merged               # candidates for cleanup
-tide branch --stale 30             # no commits for more than 30 days
+gtide branch                        # local data only, works offline
+gtide branch --remote --github      # + remote-only branches, GitHub protection and open PRs
+gtide branch --mine --sort name
+gtide branch --merged               # candidates for cleanup
+gtide branch --stale 30             # no commits for more than 30 days
 ```
 
 ```text
@@ -197,16 +203,16 @@ BRANCH         UPDATED       LAST AUTHOR  UPSTREAM  BASE     STATUS
 
 Filters combine (they all must match). Progress messages go to stderr, so the table on stdout is safe to pipe.
 
-### `tide create <branch>`
+### `gtide create <branch>`
 
 Creates a branch from an up-to-date base and switches to it.
 
 ```bash
-tide create feature/two-fa                  # from the configured base, fetched first
-tide create feature/two-fa --from release/1 # from another branch, tag, or commit
-tide create feature/two-fa --local          # no network: use the local base
-tide create feature/two-fa --track          # check out a branch that already exists on the remote
-tide create feature/two-fa --push           # also push it and set the upstream
+gtide create feature/two-fa                  # from the configured base, fetched first
+gtide create feature/two-fa --from release/1 # from another branch, tag, or commit
+gtide create feature/two-fa --local          # no network: use the local base
+gtide create feature/two-fa --track          # check out a branch that already exists on the remote
+gtide create feature/two-fa --push           # also push it and set the upstream
 ```
 
 By default Tide resolves the base for the new name from `branches.base` (falling back to `default_base`), fetches it, and starts the branch at `<remote>/<base>`. Your local copy of the base branch is not touched, and the new branch has **no upstream** until you push it, so a plain `git push` cannot target the base by accident.
@@ -219,15 +225,15 @@ By default Tide resolves the base for the new name from `branches.base` (falling
 | `--push` | Push the new branch and set `<remote>/<branch>` as its upstream. If the push fails, the branch still exists locally. |
 | `--no-switch` | Create the branch without checking it out; also allowed with uncommitted changes. |
 
-`tide create` refuses (without changing anything) when the name is invalid or is a protected branch, the branch already exists locally, a merge or rebase is in progress, or, unless `--no-switch` is given, tracked files have uncommitted changes. Note that the base is resolved from the *new* branch name, so `feat/x` only picks up a `feature/*` mapping if you add a `feat/*` pattern.
+`gtide create` refuses (without changing anything) when the name is invalid or is a protected branch, the branch already exists locally, a merge or rebase is in progress, or, unless `--no-switch` is given, tracked files have uncommitted changes. Note that the base is resolved from the *new* branch name, so `feat/x` only picks up a `feature/*` mapping if you add a `feat/*` pattern.
 
-### `tide update [branch]`
+### `gtide update [branch]`
 
 Brings the base branch into your current branch.
 
 ```bash
-tide update            # base resolved from .tide.yml
-tide update main       # use this base for this run only
+gtide update            # base resolved from .tide.yml
+gtide update main       # use this base for this run only
 ```
 
 What it does, in order:
@@ -238,7 +244,7 @@ What it does, in order:
 4. Integrates the base into the current branch with `merge` (default) or `rebase`, per `update.strategy`.
 5. Leaves you on your original branch and reports whether anything changed.
 
-`tide update` **stops before doing anything** when:
+`gtide update` **stops before doing anything** when:
 
 - HEAD is detached,
 - tracked files have staged or unstaged changes (untracked files are fine; Git protects them itself),
@@ -246,31 +252,31 @@ What it does, in order:
 
 It never stashes, resets, or cleans for you. If the local base branch has diverged from the remote, or is checked out in another worktree, it stops and tells you to resolve that first.
 
-On conflicts the repository is left in Git's normal conflict state. Resolve the files, `git add` them, then run [`tide continue`](#tide-continue-and-tide-abort), or give up with `tide abort`. Plain `git merge --continue` and `git rebase --continue` work too.
+On conflicts the repository is left in Git's normal conflict state. Resolve the files, `git add` them, then run [`gtide continue`](#gtide-continue-and-gtide-abort), or give up with `gtide abort`. Plain `git merge --continue` and `git rebase --continue` work too.
 
-If you are already on the base branch, `tide update` simply fast-forwards it to the remote.
+If you are already on the base branch, `gtide update` simply fast-forwards it to the remote.
 
-### `tide continue` and `tide abort`
+### `gtide continue` and `gtide abort`
 
-When `tide update` (or any merge, rebase, cherry-pick or revert) stops on conflicts, these finish or undo it without you having to remember which operation it was.
+When `gtide update` (or any merge, rebase, cherry-pick or revert) stops on conflicts, these finish or undo it without you having to remember which operation it was.
 
 ```bash
 # ...edit the conflicted files, then:
 git add src/auth/login.go
-tide continue          # finishes the merge/rebase/cherry-pick/revert
-tide abort             # or: give up and go back to before it; asks [y/N], --yes skips
+gtide continue          # finishes the merge/rebase/cherry-pick/revert
+gtide abort             # or: give up and go back to before it; asks [y/N], --yes skips
 ```
 
-`tide continue` refuses while any file still has conflicts and lists them. Before continuing it runs the pre-commit checks, so a file staged with leftover `<<<<<<<` markers or a secret is rejected and the operation stays in progress. Git's prepared message is used as it is, with no editor. A rebase can stop again on the next commit: resolve it and run `tide continue` again. `tide abort` discards the conflict resolutions made so far, which is why it asks first.
+`gtide continue` refuses while any file still has conflicts and lists them. Before continuing it runs the pre-commit checks, so a file staged with leftover `<<<<<<<` markers or a secret is rejected and the operation stays in progress. Git's prepared message is used as it is, with no editor. A rebase can stop again on the next commit: resolve it and run `gtide continue` again. `gtide abort` discards the conflict resolutions made so far, which is why it asks first.
 
-### `tide review <PR>`
+### `gtide review <PR>`
 
 Checks out a GitHub Pull Request on a local review branch named `tide/review/pr-<number>`.
 
 ```bash
-tide review 123
-tide review '#123'
-tide review https://github.com/acme/tool/pull/123
+gtide review 123
+gtide review '#123'
+gtide review https://github.com/acme/tool/pull/123
 ```
 
 - Fetches `refs/pull/<n>/head`, so it works for PRs from forks.
@@ -282,19 +288,19 @@ tide review https://github.com/acme/tool/pull/123
 
 Return to your previous branch with `git switch <branch>`.
 
-### `tide commit` and `tide save`
+### `gtide commit` and `gtide save`
 
-`tide commit` commits what is staged. `tide save` stages and commits in one step: the files you name with `-f`, or every change when you give none.
+`gtide commit` commits what is staged. `gtide save` stages and commits in one step: the files you name with `-f`, or every change when you give none.
 
 ```bash
-tide commit -m "feat(auth): add login form"
-tide commit --type feat --scope auth -m "add login form"   # builds "feat(auth): add login form"
-tide commit -a -m "fix: handle empty token"                # also stages tracked changes
+gtide commit -m "feat(auth): add login form"
+gtide commit --type feat --scope auth -m "add login form"   # builds "feat(auth): add login form"
+gtide commit -a -m "fix: handle empty token"                # also stages tracked changes
 
-tide save -m "feat: add login form"                       # every change, new files included
-tide save -m "feat(auth): add login form" -f src/auth/login_form.tsx
-tide save --type fix -m "handle empty token" -f api/token.go -f api/token_test.go
-tide save -m "docs: update readme" -f docs/                # a directory stages everything under it
+gtide save -m "feat: add login form"                       # every change, new files included
+gtide save -m "feat(auth): add login form" -f src/auth/login_form.tsx
+gtide save --type fix -m "handle empty token" -f api/token.go -f api/token_test.go
+gtide save -m "docs: update readme" -f docs/                # a directory stages everything under it
 ```
 
 | Flag | Effect |
@@ -302,33 +308,33 @@ tide save -m "docs: update readme" -f docs/                # a directory stages 
 | `-m, --message` | The commit message (required). |
 | `--type`, `--scope` | Build `type(scope): message` from `-m`. `--scope` needs `--type`. |
 | `--body` | Commit body, after a blank line. |
-| `-a, --all` | `tide commit` only: stage modifications and deletions of tracked files first. Untracked files are never added. |
-| `-f, --file` | `tide save` only, repeatable: stage only this file or directory. Without it, every change is staged. Paths are relative to where you run the command and must be inside the repository. |
+| `-a, --all` | `gtide commit` only: stage modifications and deletions of tracked files first. Untracked files are never added. |
+| `-f, --file` | `gtide save` only, repeatable: stage only this file or directory. Without it, every change is staged. Paths are relative to where you run the command and must be inside the repository. |
 
 Before anything is committed, Tide checks that the branch is not protected, that the message follows your Conventional Commits rules, and that the staged lines hold no likely secrets (the same checks as the hooks, with friendlier errors). Your Git hooks still run, and Tide never uses `--no-verify`.
 
-`tide save` without `-f` is like `git add --all`: modified, deleted, and new files that `.gitignore` does not exclude. Tide lists what it staged before committing, and the secret scan covers new files too. With `-f` it refuses when other files are already staged, so the commit holds exactly the files you named. If a check fails after staging, Tide restores the index and nothing stays staged. It also refuses during a merge or rebase, where plain `git commit` is the right tool.
+`gtide save` without `-f` is like `git add --all`: modified, deleted, and new files that `.gitignore` does not exclude. Tide lists what it staged before committing, and the secret scan covers new files too. With `-f` it refuses when other files are already staged, so the commit holds exactly the files you named. If a check fails after staging, Tide restores the index and nothing stays staged. It also refuses during a merge or rebase, where plain `git commit` is the right tool.
 
-### `tide push`
+### `gtide push`
 
 Pushes the current branch to the configured remote under the same name and sets it as upstream.
 
 ```bash
-tide push            # publish the current branch
-tide push --force    # after a rebase or amend; asks [y/N] (skip with --yes)
+gtide push            # publish the current branch
+gtide push --force    # after a rebase or amend; asks [y/N] (skip with --yes)
 ```
 
 Refuses on a detached HEAD and on protected branches (`branches.protected`). Uncommitted changes are not pushed, and Tide warns when there are some. `--force` is `--force-with-lease`: it replaces the remote branch only if it still points where your last fetch saw it, so a teammate's newer commits are never overwritten silently. Your `pre-push` hook still applies. A plain `git push` keeps working too.
 
-### `tide pr`
+### `gtide pr`
 
 Pushes the current branch and opens a GitHub Pull Request.
 
 ```bash
 export GITHUB_TOKEN=...          # needs pull-request write access
-tide pr                          # shows a summary, asks [y/N]
-tide pr --draft --yes
-tide pr --base main --title "Add login" --body "Closes #12"
+gtide pr                          # shows a summary, asks [y/N]
+gtide pr --draft --yes
+gtide pr --base main --title "Add login" --body "Closes #12"
 ```
 
 Flow:
@@ -341,15 +347,15 @@ Flow:
 
 Defaults: the title is the commit subject when the branch has exactly one commit, otherwise the humanised branch name (`feature/login-page` becomes "Login page"). The body lists the commit subjects. If GitHub rejects the request after the push (for example, a PR already exists), the branch stays pushed and the error says so.
 
-### `tide doctor`
+### `gtide doctor`
 
-Diagnoses the setup without changing anything: Git version, repository, configuration, remote, base branch, each hook, and whether `tide` is on the `PATH`. Problems are shown with a hint; it exits non-zero only on hard failures (no Git, not a repository, invalid configuration).
+Diagnoses the setup without changing anything: Git version, repository, configuration, remote, base branch, each hook, and whether `gtide` is on the `PATH`. Problems are shown with a hint; it exits non-zero only on hard failures (no Git, not a repository, invalid configuration).
 
-### `tide config`
+### `gtide config`
 
 ```bash
-tide config            # print the effective configuration (file merged over defaults)
-tide config validate   # validate .tide.yml and report every problem with its field
+gtide config            # print the effective configuration (file merged over defaults)
+gtide config validate   # validate .tide.yml and report every problem with its field
 ```
 
 ## Configuration
@@ -399,7 +405,7 @@ hooks:
 | `commits.require_scope` | `false` | Require `type(scope):` instead of `type:`. |
 | `secrets.enabled` | `true` | Scan staged changes for likely secrets. |
 | `secrets.custom_patterns` | none | Extra detectors: `name` (lowercase, digits, `_`, `-`) and `pattern` (Go regular expression). At most 100. |
-| `hooks.manage` | `true` | Whether `tide init` installs hooks. |
+| `hooks.manage` | `true` | Whether `gtide init` installs hooks. |
 
 ### Choosing a base branch
 
@@ -414,11 +420,11 @@ branches:
     feature/hotfix-payments: main    # exact name beats both
 ```
 
-For a one-off exception, pass the base explicitly: `tide update main` or `tide pr --base main`.
+For a one-off exception, pass the base explicitly: `gtide update main` or `gtide pr --base main`.
 
 ## Authentication
 
-`tide pr` needs a GitHub token with pull-request write access (a fine-grained token with "Pull requests: Read and write" and "Contents: Read" on the repository, or a classic token with the `repo` scope). `tide review` and `tide branch --github` only need one for private repositories. Pushing uses Git's own authentication, not this token.
+`gtide pr` needs a GitHub token with pull-request write access (a fine-grained token with "Pull requests: Read and write" and "Contents: Read" on the repository, or a classic token with the `repo` scope). `gtide review` and `gtide branch --github` only need one for private repositories. Pushing uses Git's own authentication, not this token.
 
 Tide looks for the token in this order and uses the first it finds:
 
@@ -439,11 +445,11 @@ echo ".env" >> .gitignore   # keep it out of Git
 
 Only those two keys are read from `.env`; the rest of the file is ignored and nothing is exported to other processes. Quotes, `export` and `#` comments are understood; `$VARIABLE` is not expanded. The file must be a regular file of at most 64 KB.
 
-If `.env` is **tracked by Git**, Tide refuses to use it, since the token is already exposed: revoke it and run `git rm --cached .env`. If `.env` is not covered by `.gitignore`, Tide uses it but warns, because a careless `git add` (including `tide save` without `-f`) would commit it. A token is never written to the output or to error messages. You can also use your `gh` login: `export GITHUB_TOKEN=$(gh auth token)`.
+If `.env` is **tracked by Git**, Tide refuses to use it, since the token is already exposed: revoke it and run `git rm --cached .env`. If `.env` is not covered by `.gitignore`, Tide uses it but warns, because a careless `git add` (including `gtide save` without `-f`) would commit it. A token is never written to the output or to error messages. You can also use your `gh` login: `export GITHUB_TOKEN=$(gh auth token)`.
 
 ## What the hooks do
 
-`tide init` installs three hooks. They apply to every Git client on the machine, including IDEs, not only to the terminal.
+`gtide init` installs three hooks. They apply to every Git client on the machine, including IDEs, not only to the terminal.
 
 | Hook | Rejects |
 |---|---|
@@ -455,7 +461,7 @@ If `.env` is **tracked by Git**, Tide refuses to use it, since the token is alre
 
 **Secret scanning** inspects only the lines you add. Built-in detectors cover AWS access key IDs, GitHub tokens, Slack tokens, Stripe live keys, Google API keys, and private key headers; add your own with `secrets.custom_patterns`. Findings show the file, line, and rule name, never the matched value. For a false positive, put `tide:allow-secret` on that line.
 
-**Conflict markers**: added lines that start with `<<<<<<<` or `>>>>>>>` (what Git writes into a file on a conflict) block the commit, so an unresolved conflict cannot slip into history. This check is always on, also when `secrets.enabled` is false. `=======` alone is not flagged, since it is a common heading underline. For content that really contains a marker, put `tide:allow-conflict-marker` on that line. `tide commit` and `tide save` apply the same check.
+**Conflict markers**: added lines that start with `<<<<<<<` or `>>>>>>>` (what Git writes into a file on a conflict) block the commit, so an unresolved conflict cannot slip into history. This check is always on, also when `secrets.enabled` is false. `=======` alone is not flagged, since it is a common heading underline. For content that really contains a marker, put `tide:allow-conflict-marker` on that line. `gtide commit` and `gtide save` apply the same check.
 
 **Protected branches** stop direct commits and pushes, nudging the team to work on branches and merge through Pull Requests. Commits made while HEAD is detached (for example during a rebase) are not blocked.
 
@@ -468,14 +474,14 @@ To remove Tide's hooks, delete the three files in the hooks directory (`git rev-
 | Code | Meaning |
 |---:|---|
 | `0` | Success. |
-| `1` | General failure, including merge/rebase conflicts in `tide update` and problems found by `tide doctor`. |
+| `1` | General failure, including merge/rebase conflicts in `gtide update` and problems found by `gtide doctor`. |
 | `2` | Invalid command usage or arguments. |
-| `3` | Configuration invalid, or missing where required (including a missing `GITHUB_TOKEN` for `tide pr`). |
+| `3` | Configuration invalid, or missing where required (including a missing `GITHUB_TOKEN` for `gtide pr`). |
 | `4` | A policy rejected the operation (protected branch, commit message, secret). |
 | `5` | External failure: Git, the network, or the GitHub API. |
 | `6` | Unsafe repository state; nothing was changed. |
 
-Note that when a hook rejects a command, Git itself reports a failure; the Tide exit code applies when you run `tide` directly.
+Note that when a hook rejects a command, Git itself reports a failure; the Tide exit code applies when you run `gtide` directly.
 
 ## Security and limits
 
@@ -490,31 +496,31 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 
 ## Troubleshooting
 
-**Hooks print `tide: not found on PATH; skipping ... checks`.**
-Git cannot find the binary. Put `tide` in a directory on the `PATH` that your Git client sees. GUI clients and IDEs often do not inherit the terminal's `PATH`.
+**Hooks print `gtide: not found on PATH; skipping ... checks`.**
+Git cannot find the binary. Put `gtide` in a directory on the `PATH` that your Git client sees. GUI clients and IDEs often do not inherit the terminal's `PATH`.
 
 **Hooks do not run at all.**
-Run `tide doctor`. Check that `core.hooksPath` is not pointing elsewhere (`git config core.hooksPath`) and that the hook files are executable. Re-run `tide init` after changing the hooks directory.
+Run `gtide doctor`. Check that `core.hooksPath` is not pointing elsewhere (`git config core.hooksPath`) and that the hook files are executable. Re-run `gtide init` after changing the hooks directory.
 
-**`tide update`: "uncommitted changes would be at risk".**
+**`gtide update`: "uncommitted changes would be at risk".**
 Commit or stash your tracked changes, then re-run. Tide will not touch them.
 
-**`tide update`: "cannot fast-forward local <base>".**
+**`gtide update`: "cannot fast-forward local <base>".**
 The local base branch has commits the remote does not, or is checked out in another worktree. Fix that branch by hand (or work on a separate branch), then re-run.
 
 **A commit is rejected for a secret that is not a secret.**
 Add `tide:allow-secret` to that line, or narrow your custom pattern.
 
-**`tide pr`: "GITHUB_TOKEN is not set".**
-Export a token with pull-request write access, or put it in `.env` at the repository root (see [Authentication](#authentication)). If a warning says `.env` is tracked by Git, Tide ignored it on purpose. `tide review` works without a token only for public repositories.
+**`gtide pr`: "GITHUB_TOKEN is not set".**
+Export a token with pull-request write access, or put it in `.env` at the repository root (see [Authentication](#authentication)). If a warning says `.env` is tracked by Git, Tide ignored it on purpose. `gtide review` works without a token only for public repositories.
 
-**`tide review` or `tide pr`: "not a supported GitHub remote".**
+**`gtide review` or `gtide pr`: "not a supported GitHub remote".**
 The configured `remote` must be a `github.com` URL (HTTPS, `ssh://`, or `git@github.com:owner/repo.git`). Change `remote` in `.tide.yml` if your GitHub remote is not `origin`.
 
 ## Development
 
 ```bash
-make build     # build ./tide
+make build     # build ./gtide
 make install   # build and install to $(PREFIX)/bin (default /usr/local)
 make release VERSION=v1.2.3   # archives and checksums for every platform in ./dist
 make test      # go test -race ./...

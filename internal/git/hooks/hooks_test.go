@@ -24,7 +24,7 @@ func TestInstallFresh(t *testing.T) {
 			t.Fatalf("%s not executable: %v", h.Name, err)
 		}
 		data, _ := os.ReadFile(path)
-		if !bytes.Contains(data, []byte(Marker)) || !bytes.Contains(data, []byte("tide hook "+h.Name)) {
+		if !bytes.Contains(data, []byte(Marker)) || !bytes.Contains(data, []byte("gtide hook "+h.Name)) {
 			t.Errorf("%s content unexpected:\n%s", h.Name, data)
 		}
 	}

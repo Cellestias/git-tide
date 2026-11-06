@@ -31,16 +31,18 @@ fi
 for target in $targets; do
 	os=${target%/*}
 	arch=${target#*/}
-	name=tide_${version}_${os}_${arch}
+	name=gtide_${version}_${os}_${arch}
 	stage=$dist/$name
-	exe=tide
-	[ "$os" = windows ] && exe=tide.exe
+	exe=gtide
+	alias=tide
+	if [ "$os" = windows ]; then exe=gtide.exe; alias=tide.exe; fi
 
 	echo "building $name"
 	mkdir -p "$stage"
 	CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
 		-ldflags "-s -w -X $module/internal/cli.Version=$version" \
-		-o "$stage/$exe" ./cmd/tide
+		-o "$stage/$exe" ./cmd/gtide
+	cp "$stage/$exe" "$stage/$alias"   # optional short name; a copy so it also works on Windows
 	cp README.md "$stage/README.md"
 
 	if [ "$os" = windows ]; then
@@ -51,6 +53,6 @@ for target in $targets; do
 	rm -rf "$stage"
 done
 
-(cd "$dist" && sha tide_* > checksums.txt)
+(cd "$dist" && sha gtide_* > checksums.txt)
 echo "done:"
 ls -1 "$dist"

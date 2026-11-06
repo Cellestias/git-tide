@@ -1,4 +1,4 @@
-// Package cli defines the tide commands. It parses input, calls one use case,
+// Package cli defines the gtide commands. It parses input, calls one use case,
 // and renders the result; it holds no Git workflow logic.
 package cli
 
@@ -65,7 +65,7 @@ func (e *env) run(ctx context.Context, args []string, out, errOut io.Writer) int
 
 func (e *env) rootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "tide",
+		Use:           "gtide",
 		Short:         "Git Tide — move with the flow",
 		Long:          "Git Tide sits on top of Git and makes common workflows safer, faster, and more consistent.",
 		Version:       Version,
@@ -103,7 +103,7 @@ func (e *env) openRepo(ctx context.Context) (*repository.Repository, error) {
 	repo, err := repository.Open(ctx, e.ex, e.dir)
 	switch {
 	case errors.Is(err, repository.ErrNotRepository):
-		return nil, apperr.New(apperr.CodeUnsafeRepo, "not inside a Git repository", "run tide from within a repository")
+		return nil, apperr.New(apperr.CodeUnsafeRepo, "not inside a Git repository", "run gtide from within a repository")
 	case err != nil:
 		return nil, apperr.Wrap(apperr.CodeExternal, "cannot run git", "make sure Git is installed and on PATH", err)
 	}
@@ -121,7 +121,7 @@ func (e *env) requireConfig(ctx context.Context) (*repository.Repository, domain
 		return nil, domain.Config{}, err
 	}
 	if !res.Found {
-		return nil, domain.Config{}, apperr.New(apperr.CodeConfig, config.FileName+" not found", "run `tide init` first")
+		return nil, domain.Config{}, apperr.New(apperr.CodeConfig, config.FileName+" not found", "run `gtide init` first")
 	}
 	return repo, res.Config, nil
 }

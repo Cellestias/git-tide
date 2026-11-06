@@ -1,4 +1,4 @@
-// Package doctor implements `tide doctor`: it diagnoses Git, repository,
+// Package doctor implements `gtide doctor`: it diagnoses Git, repository,
 // configuration, and hook setup without changing anything.
 package doctor
 
@@ -60,7 +60,7 @@ func Run(ctx context.Context, ex executor.Executor, dir string) []Check {
 
 	repo, err := repository.Open(ctx, ex, dir)
 	if err != nil {
-		add(Fail, "repository", err.Error(), "run tide inside a Git repository")
+		add(Fail, "repository", err.Error(), "run gtide inside a Git repository")
 		return checks
 	}
 	add(OK, "repository", repo.Root, "")
@@ -68,19 +68,19 @@ func Run(ctx context.Context, ex executor.Executor, dir string) []Check {
 	cfg, err := config.Load(repo.Root)
 	switch {
 	case err != nil:
-		add(Fail, "config", err.Error(), "run `tide config validate` for details")
+		add(Fail, "config", err.Error(), "run `gtide config validate` for details")
 		return checks
 	case !cfg.Found:
-		add(Warn, "config", config.FileName+" not found; defaults apply", "run `tide init`")
+		add(Warn, "config", config.FileName+" not found; defaults apply", "run `gtide init`")
 	default:
 		add(OK, "config", cfg.Path, "")
 	}
 	c := cfg.Config
 
 	if url, err := repo.RemoteURL(ctx, c.Remote); err != nil {
-		add(Warn, "remote", fmt.Sprintf("remote %q is not configured", c.Remote), "`tide update` and `tide review` need it")
+		add(Warn, "remote", fmt.Sprintf("remote %q is not configured", c.Remote), "`gtide update` and `gtide review` need it")
 	} else if gh, err := github.ParseRemoteURL(executor.Redact(url)); err != nil {
-		add(Warn, "remote", fmt.Sprintf("%q is not a github.com remote", c.Remote), "`tide review` supports github.com only")
+		add(Warn, "remote", fmt.Sprintf("%q is not a github.com remote", c.Remote), "`gtide review` supports github.com only")
 	} else {
 		add(OK, "remote", fmt.Sprintf("%s → %s", c.Remote, gh), "")
 	}
@@ -96,10 +96,10 @@ func Run(ctx context.Context, ex executor.Executor, dir string) []Check {
 
 	checks = append(checks, hookChecks(ctx, repo, c.Hooks.Manage)...)
 
-	if _, err := exec.LookPath("tide"); err != nil {
-		add(Warn, "tide on PATH", "not found", "hooks skip their checks when `tide` is not on PATH")
+	if _, err := exec.LookPath("gtide"); err != nil {
+		add(Warn, "gtide on PATH", "not found", "hooks skip their checks when `gtide` is not on PATH")
 	} else {
-		add(OK, "tide on PATH", "found", "")
+		add(OK, "gtide on PATH", "found", "")
 	}
 	return checks
 }
@@ -125,11 +125,11 @@ func hookChecks(ctx context.Context, repo *repository.Repository, manage bool) [
 		case s.State == hooks.Current:
 			out = append(out, Check{Level: OK, Name: name, Detail: "installed"})
 		case s.State == hooks.Outdated:
-			out = append(out, Check{Level: Warn, Name: name, Detail: "outdated", Hint: "run `tide init` to update"})
+			out = append(out, Check{Level: Warn, Name: name, Detail: "outdated", Hint: "run `gtide init` to update"})
 		case s.State == hooks.Foreign:
-			out = append(out, Check{Level: Warn, Name: name, Detail: "a hook exists that Tide does not manage", Hint: "run `tide init` to chain it"})
+			out = append(out, Check{Level: Warn, Name: name, Detail: "a hook exists that Tide does not manage", Hint: "run `gtide init` to chain it"})
 		default:
-			out = append(out, Check{Level: Warn, Name: name, Detail: "not installed", Hint: "run `tide init`"})
+			out = append(out, Check{Level: Warn, Name: name, Detail: "not installed", Hint: "run `gtide init`"})
 		}
 	}
 	return out

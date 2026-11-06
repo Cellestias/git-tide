@@ -1,4 +1,4 @@
-// Package e2e runs the compiled tide binary against disposable repositories.
+// Package e2e runs the compiled gtide binary against disposable repositories.
 package e2e
 
 import (
@@ -23,7 +23,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "tide"), "../cmd/tide")
+	build := exec.Command("go", "build", "-o", filepath.Join(dir, "gtide"), "../cmd/gtide")
 	if out, err := build.CombinedOutput(); err != nil {
 		os.Stderr.Write(out)
 		os.RemoveAll(dir)
@@ -35,11 +35,11 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// tide runs the binary in dir and returns combined output and exit code.
+// gtide runs the binary in dir and returns combined output and exit code.
 // PATH includes the built binary so installed hooks can find it.
-func tide(t *testing.T, dir string, args ...string) (string, int) {
+func gtide(t *testing.T, dir string, args ...string) (string, int) {
 	t.Helper()
-	return runIn(t, dir, filepath.Join(binDir, "tide"), args...)
+	return runIn(t, dir, filepath.Join(binDir, "gtide"), args...)
 }
 
 func runIn(t *testing.T, dir, bin string, args ...string) (string, int) {
@@ -106,7 +106,7 @@ func TestExitCodes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, code := tide(t, tt.dir, tt.args...)
+			out, code := gtide(t, tt.dir, tt.args...)
 			if code != tt.want {
 				t.Fatalf("exit = %d, want %d\n%s", code, tt.want, out)
 			}
@@ -116,10 +116,10 @@ func TestExitCodes(t *testing.T) {
 
 func TestHooksEnforcePolicy(t *testing.T) {
 	dir, bare := testutil.NewRepoWithRemote(t)
-	if out, code := tide(t, dir, "init"); code != 0 {
+	if out, code := gtide(t, dir, "init"); code != 0 {
 		t.Fatalf("init: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "doctor"); code != 0 || strings.Contains(out, "✗") {
+	if out, code := gtide(t, dir, "doctor"); code != 0 || strings.Contains(out, "✗") {
 		t.Fatalf("doctor: %d\n%s", code, out)
 	}
 
@@ -174,7 +174,7 @@ func TestHookChainingKeepsExistingHook(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".git", "hooks", "pre-commit"), []byte(hook), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if out, code := tide(t, dir, "init"); code != 0 || !strings.Contains(out, "preserved") {
+	if out, code := gtide(t, dir, "init"); code != 0 || !strings.Contains(out, "preserved") {
 		t.Fatalf("init: %d\n%s", code, out)
 	}
 	git(t, dir, "checkout", "-q", "-b", "feature/y")
@@ -196,11 +196,11 @@ func TestUpdateEndToEnd(t *testing.T) {
 	testutil.Commit(t, other, "feat: upstream")
 	testutil.Run(t, other, "push", "-q", "origin", "main")
 
-	if out, code := tide(t, dir, "init", "--no-hooks"); code != 0 {
+	if out, code := gtide(t, dir, "init", "--no-hooks"); code != 0 {
 		t.Fatalf("init: %s", out)
 	}
 	git(t, dir, "checkout", "-q", "-b", "feature/z")
-	out, code := tide(t, dir, "update")
+	out, code := gtide(t, dir, "update")
 	if code != 0 || !strings.Contains(out, "Updated") {
 		t.Fatalf("update: %d\n%s", code, out)
 	}
@@ -208,7 +208,7 @@ func TestUpdateEndToEnd(t *testing.T) {
 		t.Error("upstream change missing")
 	}
 
-	out, code = tide(t, dir, "config")
+	out, code = gtide(t, dir, "config")
 	if code != 0 || !strings.Contains(out, "default_base: main") {
 		t.Fatalf("config: %d\n%s", code, out)
 	}
@@ -229,7 +229,7 @@ func TestPREndToEnd(t *testing.T) {
 	dir, bare := testutil.NewRepoWithRemote(t)
 	testutil.Run(t, dir, "remote", "set-url", "origin", "https://github.com/acme/tool.git")
 	testutil.Run(t, dir, "config", "url."+bare+".insteadOf", "https://github.com/acme/tool.git")
-	if out, code := tide(t, dir, "init"); code != 0 {
+	if out, code := gtide(t, dir, "init"); code != 0 {
 		t.Fatalf("init: %s", out)
 	}
 	git(t, dir, "checkout", "-q", "-b", "feature/pay")
@@ -238,7 +238,7 @@ func TestPREndToEnd(t *testing.T) {
 	if out, code := git(t, dir, "commit", "-q", "-m", "feat: add pay"); code != 0 {
 		t.Fatalf("commit: %s", out)
 	}
-	bin := filepath.Join(binDir, "tide")
+	bin := filepath.Join(binDir, "gtide")
 
 	// no token → configuration error, nothing pushed
 	out, code := runEnv(t, dir, []string{"GITHUB_TOKEN=", "GH_TOKEN="}, "", bin, "pr", "--yes")
@@ -277,10 +277,10 @@ func TestCreateEndToEnd(t *testing.T) {
 	testutil.Run(t, other, "push", "-q", "origin", "main")
 	tip := testutil.Run(t, other, "rev-parse", "HEAD")
 
-	if out, code := tide(t, dir, "init"); code != 0 {
+	if out, code := gtide(t, dir, "init"); code != 0 {
 		t.Fatalf("init: %s", out)
 	}
-	out, code := tide(t, dir, "create", "feature/two-fa", "--push")
+	out, code := gtide(t, dir, "create", "feature/two-fa", "--push")
 	if code != 0 || !strings.Contains(out, "Created and switched to feature/two-fa") {
 		t.Fatalf("create: %d\n%s", code, out)
 	}
@@ -290,10 +290,10 @@ func TestCreateEndToEnd(t *testing.T) {
 	if testutil.Run(t, bare, "rev-parse", "refs/heads/feature/two-fa") != tip {
 		t.Error("branch not pushed")
 	}
-	if out, code := tide(t, dir, "create", "feature/two-fa"); code != 6 {
+	if out, code := gtide(t, dir, "create", "feature/two-fa"); code != 6 {
 		t.Fatalf("duplicate: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "create", "main"); code != 4 {
+	if out, code := gtide(t, dir, "create", "main"); code != 4 {
 		t.Fatalf("protected name: %d\n%s", code, out)
 	}
 }
@@ -301,66 +301,66 @@ func TestCreateEndToEnd(t *testing.T) {
 func TestBranchEndToEnd(t *testing.T) {
 	dir, bare := testutil.NewRepoWithRemote(t)
 	testutil.Run(t, bare, "branch", "colleague/x", "main")
-	if out, code := tide(t, dir, "init", "--no-hooks"); code != 0 {
+	if out, code := gtide(t, dir, "init", "--no-hooks"); code != 0 {
 		t.Fatalf("init: %s", out)
 	}
 	git(t, dir, "checkout", "-q", "-b", "feature/z")
 
-	out, code := tide(t, dir, "branch")
+	out, code := gtide(t, dir, "branch")
 	if code != 0 || !strings.HasPrefix(out, "BRANCH") || !strings.Contains(out, "* feature/z") || strings.Contains(out, "colleague/x") {
 		t.Fatalf("branch: %d\n%s", code, out)
 	}
-	out, code = tide(t, dir, "branch", "--remote", "--sort", "name")
+	out, code = gtide(t, dir, "branch", "--remote", "--sort", "name")
 	if code != 0 || !strings.Contains(out, "colleague/x") || !strings.Contains(out, "remote-only") {
 		t.Fatalf("branch --remote: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "branch", "--sort", "bogus"); code != 2 {
+	if out, code := gtide(t, dir, "branch", "--sort", "bogus"); code != 2 {
 		t.Fatalf("bad sort: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "branches", "--merged"); code != 0 {
+	if out, code := gtide(t, dir, "branches", "--merged"); code != 0 {
 		t.Fatalf("alias: %d\n%s", code, out)
 	}
 }
 
 func TestChangeEndToEnd(t *testing.T) {
 	dir, _ := testutil.NewRepoWithRemote(t)
-	if out, code := tide(t, dir, "init", "--no-hooks"); code != 0 {
+	if out, code := gtide(t, dir, "init", "--no-hooks"); code != 0 {
 		t.Fatalf("init: %s", out)
 	}
 	git(t, dir, "branch", "feature/two-fa")
 	git(t, dir, "branch", "feature/login")
 
-	if out, code := tide(t, dir, "change", "two-fa"); code != 0 || !strings.Contains(out, "Switched to feature/two-fa") {
+	if out, code := gtide(t, dir, "change", "two-fa"); code != 0 || !strings.Contains(out, "Switched to feature/two-fa") {
 		t.Fatalf("partial: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "switch", "-"); code != 0 || !strings.Contains(out, "Switched to main") {
+	if out, code := gtide(t, dir, "switch", "-"); code != 0 || !strings.Contains(out, "Switched to main") {
 		t.Fatalf("alias and previous: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "change", "feature"); code != 6 || !strings.Contains(out, "matches 2 branches") {
+	if out, code := gtide(t, dir, "change", "feature"); code != 6 || !strings.Contains(out, "matches 2 branches") {
 		t.Fatalf("ambiguous: %d\n%s", code, out)
 	}
 	testutil.WriteFile(t, dir, "README.md", "dirty\n")
-	if out, code := tide(t, dir, "change", "login"); code != 6 || !strings.Contains(out, "--carry") {
+	if out, code := gtide(t, dir, "change", "login"); code != 6 || !strings.Contains(out, "--carry") {
 		t.Fatalf("dirty: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "change", "login", "--carry"); code != 0 {
+	if out, code := gtide(t, dir, "change", "login", "--carry"); code != 0 {
 		t.Fatalf("carry: %d\n%s", code, out)
 	}
 }
 
 func TestPushEndToEnd(t *testing.T) {
 	dir, bare := testutil.NewRepoWithRemote(t)
-	if out, code := tide(t, dir, "init"); code != 0 {
+	if out, code := gtide(t, dir, "init"); code != 0 {
 		t.Fatalf("init: %s", out)
 	}
-	if out, code := tide(t, dir, "push"); code != 4 {
+	if out, code := gtide(t, dir, "push"); code != 4 {
 		t.Fatalf("push on protected main: %d\n%s", code, out)
 	}
 
 	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/a")
 	testutil.WriteFile(t, dir, "a.txt", "a\n")
 	testutil.Commit(t, dir, "feat: a")
-	out, code := tide(t, dir, "push")
+	out, code := gtide(t, dir, "push")
 	if code != 0 || !strings.Contains(out, "Pushed feature/a") {
 		t.Fatalf("push: %d\n%s", code, out)
 	}
@@ -369,29 +369,29 @@ func TestPushEndToEnd(t *testing.T) {
 	}
 
 	testutil.Run(t, dir, "commit", "-q", "--amend", "-m", "feat: a again")
-	if out, code := tide(t, dir, "push"); code != 5 {
+	if out, code := gtide(t, dir, "push"); code != 5 {
 		t.Fatalf("push of rewritten history: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "push", "--force", "--yes"); code != 0 {
+	if out, code := gtide(t, dir, "push", "--force", "--yes"); code != 0 {
 		t.Fatalf("force push: %d\n%s", code, out)
 	}
 }
 
 func TestSaveAndCommitEndToEnd(t *testing.T) {
 	dir, _ := testutil.NewRepoWithRemote(t)
-	if out, code := tide(t, dir, "init"); code != 0 {
+	if out, code := gtide(t, dir, "init"); code != 0 {
 		t.Fatalf("init: %s", out)
 	}
 	testutil.WriteFile(t, dir, "a.txt", "a\n")
-	if out, code := tide(t, dir, "save", "-m", "feat: add a", "-f", "a.txt"); code != 4 {
+	if out, code := gtide(t, dir, "save", "-m", "feat: add a", "-f", "a.txt"); code != 4 {
 		t.Fatalf("save on protected main: %d\n%s", code, out)
 	}
 
 	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/a")
-	if out, code := tide(t, dir, "save", "-m", "added a", "-f", "a.txt"); code != 4 {
+	if out, code := gtide(t, dir, "save", "-m", "added a", "-f", "a.txt"); code != 4 {
 		t.Fatalf("invalid message: %d\n%s", code, out)
 	}
-	out, code := tide(t, dir, "save", "--type", "feat", "--scope", "a", "-m", "add a", "-f", "a.txt")
+	out, code := gtide(t, dir, "save", "--type", "feat", "--scope", "a", "-m", "add a", "-f", "a.txt")
 	if code != 0 || !strings.Contains(out, "Committed") {
 		t.Fatalf("save: %d\n%s", code, out)
 	}
@@ -400,25 +400,25 @@ func TestSaveAndCommitEndToEnd(t *testing.T) {
 	}
 
 	testutil.WriteFile(t, dir, "b.txt", "b\n")
-	if out, code := tide(t, dir, "save", "-m", "feat: add b"); code != 0 || !strings.Contains(out, "b.txt") {
+	if out, code := gtide(t, dir, "save", "-m", "feat: add b"); code != 0 || !strings.Contains(out, "b.txt") {
 		t.Fatalf("save without -f: %d\n%s", code, out)
 	}
 
 	testutil.WriteFile(t, dir, "a.txt", "changed\n")
-	if out, code := tide(t, dir, "commit", "-m", "fix: change a"); code != 6 {
+	if out, code := gtide(t, dir, "commit", "-m", "fix: change a"); code != 6 {
 		t.Fatalf("commit with nothing staged: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "commit", "-a", "-m", "fix: change a"); code != 0 {
+	if out, code := gtide(t, dir, "commit", "-a", "-m", "fix: change a"); code != 0 {
 		t.Fatalf("commit -a: %d\n%s", code, out)
 	}
 }
 
 func TestContinueAndAbortEndToEnd(t *testing.T) {
 	dir := testutil.NewRepo(t)
-	if out, code := tide(t, dir, "init", "--no-hooks"); code != 0 {
+	if out, code := gtide(t, dir, "init", "--no-hooks"); code != 0 {
 		t.Fatalf("init: %s", out)
 	}
-	if out, code := tide(t, dir, "continue"); code != 6 {
+	if out, code := gtide(t, dir, "continue"); code != 6 {
 		t.Fatalf("continue with nothing in progress: %d\n%s", code, out)
 	}
 	testutil.WriteFile(t, dir, "f.txt", "base\n")
@@ -431,10 +431,10 @@ func TestContinueAndAbortEndToEnd(t *testing.T) {
 	testutil.Commit(t, dir, "feat: a")
 
 	git(t, dir, "merge", "--no-edit", "feature/b") // conflicts
-	if out, code := tide(t, dir, "continue"); code != 6 || !strings.Contains(out, "f.txt") {
+	if out, code := gtide(t, dir, "continue"); code != 6 || !strings.Contains(out, "f.txt") {
 		t.Fatalf("continue with conflicts left: %d\n%s", code, out)
 	}
-	if out, code := tide(t, dir, "abort", "--yes"); code != 0 {
+	if out, code := gtide(t, dir, "abort", "--yes"); code != 0 {
 		t.Fatalf("abort: %d\n%s", code, out)
 	}
 	if _, code := git(t, dir, "rev-parse", "-q", "--verify", "MERGE_HEAD"); code == 0 {
@@ -444,7 +444,7 @@ func TestContinueAndAbortEndToEnd(t *testing.T) {
 	git(t, dir, "merge", "--no-edit", "feature/b") // conflicts again
 	testutil.WriteFile(t, dir, "f.txt", "resolved\n")
 	testutil.Run(t, dir, "add", "f.txt")
-	if out, code := tide(t, dir, "continue"); code != 0 || !strings.Contains(out, "Finished the merge") {
+	if out, code := gtide(t, dir, "continue"); code != 0 || !strings.Contains(out, "Finished the merge") {
 		t.Fatalf("continue: %d\n%s", code, out)
 	}
 }
@@ -462,14 +462,14 @@ func TestPRTokenFromDotenv(t *testing.T) {
 	dir, bare := testutil.NewRepoWithRemote(t)
 	testutil.Run(t, dir, "remote", "set-url", "origin", "https://github.com/acme/tool.git")
 	testutil.Run(t, dir, "config", "url."+bare+".insteadOf", "https://github.com/acme/tool.git")
-	if out, code := tide(t, dir, "init"); code != 0 {
+	if out, code := gtide(t, dir, "init"); code != 0 {
 		t.Fatalf("init: %s", out)
 	}
 	git(t, dir, "checkout", "-q", "-b", "feature/pay")
 	testutil.WriteFile(t, dir, "pay.txt", "p\n")
 	git(t, dir, "add", "pay.txt")
 	git(t, dir, "commit", "-q", "-m", "feat: add pay")
-	bin := filepath.Join(binDir, "tide")
+	bin := filepath.Join(binDir, "gtide")
 
 	// a tracked .env is never used
 	testutil.WriteFile(t, dir, ".env", "GITHUB_TOKEN=from-dotenv\n")

@@ -1,4 +1,4 @@
-// Package change implements `tide change`: switch branches safely.
+// Package change implements `gtide change`: switch branches safely.
 package change
 
 import (
@@ -31,7 +31,7 @@ type target struct {
 }
 
 // Run switches to the branch matching query. No network call is made: remote
-// branches are the ones already fetched (see `tide branch --remote`).
+// branches are the ones already fetched (see `gtide branch --remote`).
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, query string, opts Options, p output.Printer) error {
 	if strings.HasPrefix(query, "-") && query != "-" {
 		return apperr.Usage("invalid branch %q", query)
@@ -125,7 +125,7 @@ func resolve(ctx context.Context, repo *repository.Repository, refs []repository
 	switch len(matches) {
 	case 0:
 		return target{}, apperr.New(apperr.CodeUnsafeRepo, fmt.Sprintf("no branch matches %q", clean(query)),
-			"list branches with `tide branch --remote`, or create one with `tide create`")
+			"list branches with `gtide branch --remote`, or create one with `gtide create`")
 	case 1:
 		return matches[0], nil
 	}
@@ -190,7 +190,7 @@ func hints(ctx context.Context, repo *repository.Repository, cfg domain.Config, 
 		}
 		headRef := "refs/heads/" + t.name
 		if _, behind, err := repo.AheadBehind(ctx, baseRef, headRef); err == nil && behind > 0 {
-			p.Info("↓%d behind %s: run `tide update`", behind, clean(base))
+			p.Info("↓%d behind %s: run `gtide update`", behind, clean(base))
 		}
 		return
 	}
