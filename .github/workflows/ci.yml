@@ -23,7 +23,7 @@ jobs:
         run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test -race ./...
-      - run: go build -o /dev/null ./cmd/tide
+      - run: go build -o /dev/null ./cmd/gtide
 
   lint:
     runs-on: ubuntu-latest
