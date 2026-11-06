@@ -55,17 +55,17 @@ Options are environment variables: `GTIDE_VERSION=v1.1.0` to pick a release, `GT
 
 ### Download a release
 
-The links below are for **v1.1.0**, the current release. Older and newer versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases). Archive names are `gtide_<version>_<os>_<arch>`; verify a download against `checksums.txt` from the same release.
+The links below are for **v1.2.0**, the current release. Older and newer versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases). Archive names are `gtide_<version>_<os>_<arch>`; verify a download against `checksums.txt` from the same release.
 
 | System | Download |
 |---|---|
-| macOS, Apple Silicon (M1 and newer) | [gtide_v1.1.0_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_darwin_arm64.tar.gz) |
-| macOS, Intel | [gtide_v1.1.0_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_darwin_amd64.tar.gz) |
-| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [gtide_v1.1.0_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_linux_amd64.tar.gz) |
-| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [gtide_v1.1.0_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_linux_arm64.tar.gz) |
-| Windows, x86-64 | [gtide_v1.1.0_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_windows_amd64.zip) |
-| Windows, ARM64 | [gtide_v1.1.0_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/gtide_v1.1.0_windows_arm64.zip) |
-| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/download/v1.1.0/checksums.txt) |
+| macOS, Apple Silicon (M1 and newer) | [gtide_v1.2.0_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.2.0/gtide_v1.2.0_darwin_arm64.tar.gz) |
+| macOS, Intel | [gtide_v1.2.0_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.2.0/gtide_v1.2.0_darwin_amd64.tar.gz) |
+| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [gtide_v1.2.0_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.2.0/gtide_v1.2.0_linux_amd64.tar.gz) |
+| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [gtide_v1.2.0_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.2.0/gtide_v1.2.0_linux_arm64.tar.gz) |
+| Windows, x86-64 | [gtide_v1.2.0_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.2.0/gtide_v1.2.0_windows_amd64.zip) |
+| Windows, ARM64 | [gtide_v1.2.0_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.2.0/gtide_v1.2.0_windows_arm64.zip) |
+| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/download/v1.2.0/checksums.txt) |
 
 **macOS and Linux**
 
@@ -96,7 +96,7 @@ Set `$version` to the latest tag shown on the Releases page, and use `arm64` ins
 
 ```powershell
 $repo = "https://github.com/Cellestias/git-tide"
-$version = "v1.1.0"
+$version = "v1.2.0"
 $name = "gtide_${version}_windows_amd64"
 
 Invoke-WebRequest "$repo/releases/download/$version/$name.zip" -OutFile "$name.zip"
