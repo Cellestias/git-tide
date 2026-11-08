@@ -30,6 +30,10 @@ type (
 	NewPullRequest = provider.NewPullRequest
 	PRRef          = provider.Ref
 	ErrValidation  = provider.ErrValidation
+	ListOptions    = provider.ListOptions
+	ChangedFile    = provider.ChangedFile
+	CommitSummary  = provider.CommitSummary
+	Review         = provider.Review
 )
 
 // ErrNotFound means the PR or repository does not exist or is not accessible.
@@ -235,13 +239,24 @@ func validationMessage(body []byte) string {
 
 func decodePullRequest(body []byte) (PullRequest, error) {
 	var raw struct {
-		Number  int    `json:"number"`
-		Title   string `json:"title"`
-		State   string `json:"state"`
-		HTMLURL string `json:"html_url"`
-		User    struct {
+		Number    int        `json:"number"`
+		Title     string     `json:"title"`
+		Body      string     `json:"body"`
+		State     string     `json:"state"`
+		Draft     bool       `json:"draft"`
+		HTMLURL   string     `json:"html_url"`
+		MergedAt  *time.Time `json:"merged_at"`
+		CreatedAt time.Time  `json:"created_at"`
+		UpdatedAt time.Time  `json:"updated_at"`
+		User      struct {
 			Login string `json:"login"`
 		} `json:"user"`
+		Assignees []struct {
+			Login string `json:"login"`
+		} `json:"assignees"`
+		RequestedReviewers []struct {
+			Login string `json:"login"`
+		} `json:"requested_reviewers"`
 		Head struct {
 			Ref  string `json:"ref"`
 			Repo *struct {
@@ -256,13 +271,26 @@ func decodePullRequest(body []byte) (PullRequest, error) {
 		return PullRequest{}, fmt.Errorf("decode GitHub API response: %w", err)
 	}
 	pr := PullRequest{
-		Number:  raw.Number,
-		Title:   raw.Title,
-		State:   raw.State,
-		URL:     raw.HTMLURL,
-		Author:  raw.User.Login,
-		HeadRef: raw.Head.Ref,
-		BaseRef: raw.Base.Ref,
+		Number:    raw.Number,
+		Title:     raw.Title,
+		Body:      raw.Body,
+		State:     raw.State,
+		Draft:     raw.Draft,
+		URL:       raw.HTMLURL,
+		Author:    raw.User.Login,
+		HeadRef:   raw.Head.Ref,
+		BaseRef:   raw.Base.Ref,
+		CreatedAt: raw.CreatedAt,
+		UpdatedAt: raw.UpdatedAt,
+	}
+	if raw.MergedAt != nil {
+		pr.State = provider.StateMerged
+	}
+	for _, a := range raw.Assignees {
+		pr.Assignees = append(pr.Assignees, a.Login)
+	}
+	for _, r := range raw.RequestedReviewers {
+		pr.Reviewers = append(pr.Reviewers, r.Login)
 	}
 	if raw.Head.Repo != nil {
 		pr.HeadRepo = raw.Head.Repo.FullName
@@ -339,6 +367,9 @@ func (c *Client) eachPage(ctx context.Context, endpoint string, handle func(json
 			return false, err
 		}
 		if err := handle(body); err != nil {
+			if errors.Is(err, errStop) {
+				return false, nil
+			}
 			return false, fmt.Errorf("decode GitHub API response: %w", err)
 		}
 		if count(body) < pageSize {
@@ -355,4 +386,182 @@ func redactURLErr(err error) error {
 		return ue.Err
 	}
 	return err
+}
+
+// errStop ends a paginated walk early; it is not an error for the caller.
+var errStop = errors.New("stop")
+
+// eachItem walks a list endpoint and calls fn for every element of every page.
+func (c *Client) eachItem(ctx context.Context, endpoint string, fn func(json.RawMessage) error) (truncated bool, err error) {
+	return c.eachPage(ctx, endpoint, func(raw json.RawMessage) error {
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return err
+		}
+		for _, it := range items {
+			if err := fn(it); err != nil {
+				return err
+			}
+		}
+		return nil
+	}, func(raw json.RawMessage) int {
+		var items []json.RawMessage
+		_ = json.Unmarshal(raw, &items)
+		return len(items)
+	})
+}
+
+// ListPullRequests lists pull requests newest first. GitHub filters only by
+// open/closed and head branch on the server, so merged/closed, author and
+// assignee are applied here.
+func (c *Client) ListPullRequests(ctx context.Context, repo Repo, opts ListOptions) (prs []PullRequest, truncated bool, err error) {
+	state := opts.State
+	if state == "" {
+		state = provider.StateOpen
+	}
+	api := map[string]string{provider.StateOpen: "open", provider.StateClosed: "closed", provider.StateMerged: "closed", provider.StateAll: "all"}[state]
+	if api == "" {
+		return nil, false, fmt.Errorf("unknown state %q", state)
+	}
+	q := url.Values{"state": {api}, "sort": {"created"}, "direction": {"desc"}}
+	if opts.Head != "" {
+		q.Set("head", repo.Owner+":"+opts.Head)
+	}
+	truncated, err = c.eachItem(ctx, c.pullsURL(repo)+"?"+q.Encode(), func(raw json.RawMessage) error {
+		pr, err := decodePullRequest(raw)
+		if err != nil {
+			return err
+		}
+		switch {
+		case state != provider.StateAll && pr.State != state, // "closed" from the API also holds merged requests
+			opts.Author != "" && !strings.EqualFold(pr.Author, opts.Author),
+			opts.Assignee != "" && !hasLogin(pr.Assignees, opts.Assignee):
+			return nil
+		}
+		prs = append(prs, pr)
+		if opts.Limit > 0 && len(prs) >= opts.Limit {
+			return errStop
+		}
+		return nil
+	})
+	return prs, truncated, err
+}
+
+func hasLogin(list []string, login string) bool {
+	for _, l := range list {
+		if strings.EqualFold(l, login) {
+			return true
+		}
+	}
+	return false
+}
+
+// CurrentUser returns the login the token belongs to.
+func (c *Client) CurrentUser(ctx context.Context) (string, error) {
+	body, err := c.do(ctx, http.MethodGet, c.BaseURL+"/user", nil)
+	if err != nil {
+		return "", err
+	}
+	var u struct {
+		Login string `json:"login"`
+	}
+	if err := json.Unmarshal(body, &u); err != nil || u.Login == "" {
+		return "", fmt.Errorf("decode GitHub API response: no login")
+	}
+	return u.Login, nil
+}
+
+// ChangedFiles lists the files of a pull request.
+func (c *Client) ChangedFiles(ctx context.Context, repo Repo, number int) (files []ChangedFile, truncated bool, err error) {
+	truncated, err = c.eachItem(ctx, fmt.Sprintf("%s/%d/files", c.pullsURL(repo), number), func(raw json.RawMessage) error {
+		var f struct {
+			Filename  string `json:"filename"`
+			Previous  string `json:"previous_filename"`
+			Status    string `json:"status"`
+			Additions int    `json:"additions"`
+			Deletions int    `json:"deletions"`
+		}
+		if err := json.Unmarshal(raw, &f); err != nil {
+			return err
+		}
+		status := f.Status
+		switch status {
+		case "removed":
+			status = "deleted"
+		case "changed":
+			status = "modified"
+		}
+		files = append(files, ChangedFile{Path: f.Filename, OldPath: f.Previous, Status: status, Additions: f.Additions, Deletions: f.Deletions, HasStats: true})
+		return nil
+	})
+	return files, truncated, err
+}
+
+// Commits lists the commits of a pull request, oldest first.
+func (c *Client) Commits(ctx context.Context, repo Repo, number int) (commits []CommitSummary, truncated bool, err error) {
+	truncated, err = c.eachItem(ctx, fmt.Sprintf("%s/%d/commits", c.pullsURL(repo), number), func(raw json.RawMessage) error {
+		var cm struct {
+			SHA    string `json:"sha"`
+			Commit struct {
+				Message string `json:"message"`
+			} `json:"commit"`
+		}
+		if err := json.Unmarshal(raw, &cm); err != nil {
+			return err
+		}
+		subject, _, _ := strings.Cut(cm.Commit.Message, "\n")
+		commits = append(commits, CommitSummary{SHA: cm.SHA, Subject: strings.TrimSpace(subject)})
+		return nil
+	})
+	return commits, truncated, err
+}
+
+// Reviews reduces the review history to each reviewer's latest decision:
+// comments do not count and a dismissed review is forgotten.
+func (c *Client) Reviews(ctx context.Context, repo Repo, number int) (Review, error) {
+	latest := map[string]string{}
+	var order []string
+	_, err := c.eachItem(ctx, fmt.Sprintf("%s/%d/reviews", c.pullsURL(repo), number), func(raw json.RawMessage) error {
+		var r struct {
+			State string `json:"state"`
+			User  struct {
+				Login string `json:"login"`
+			} `json:"user"`
+		}
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return err
+		}
+		if r.User.Login == "" {
+			return nil
+		}
+		switch r.State {
+		case "APPROVED", "CHANGES_REQUESTED":
+			if _, seen := latest[r.User.Login]; !seen {
+				order = append(order, r.User.Login)
+			}
+			latest[r.User.Login] = r.State
+		case "DISMISSED":
+			delete(latest, r.User.Login)
+		}
+		return nil
+	})
+	if err != nil {
+		return Review{}, err
+	}
+	var rv Review
+	for _, u := range order {
+		switch latest[u] {
+		case "APPROVED":
+			rv.Approvals = append(rv.Approvals, u)
+		case "CHANGES_REQUESTED":
+			rv.ChangesRequested = append(rv.ChangesRequested, u)
+		}
+	}
+	switch {
+	case len(rv.ChangesRequested) > 0:
+		rv.State = provider.ReviewChangesRequested
+	case len(rv.Approvals) > 0:
+		rv.State = provider.ReviewApproved
+	}
+	return rv, nil
 }

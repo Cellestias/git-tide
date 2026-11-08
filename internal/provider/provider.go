@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Provider names accepted in `provider:` of .tide.yml.
@@ -31,14 +32,80 @@ func (r Repo) String() string { return r.Owner + "/" + r.Name }
 // PullRequest is the provider-neutral view of a Pull Request (GitHub) or Merge
 // Request (GitLab).
 type PullRequest struct {
-	Number   int
-	Title    string
+	Number    int
+	Title     string
+	Body      string
+	State     string // StateOpen, StateClosed or StateMerged
+	Draft     bool
+	URL       string
+	Author    string
+	Assignees []string
+	Reviewers []string // reviews still requested
+	HeadRef   string
+	BaseRef   string
+	HeadRepo  string // full path of the head repository; empty if unknown or deleted
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Request states, the same on every provider.
+const (
+	StateOpen   = "open"
+	StateClosed = "closed"
+	StateMerged = "merged"
+	StateAll    = "all" // only valid as a filter
+)
+
+// ValidState reports whether s is a state a list can be filtered by.
+func ValidState(s string) bool {
+	switch s {
+	case StateOpen, StateClosed, StateMerged, StateAll:
+		return true
+	}
+	return false
+}
+
+// ListOptions filters ListPullRequests. Empty fields do not filter; State
+// defaults to open. Author and Assignee are login names (never "me": callers
+// resolve that with CurrentUser). Head limits the list to requests whose
+// source branch lives in the repository itself.
+type ListOptions struct {
 	State    string
-	URL      string
 	Author   string
-	HeadRef  string
-	BaseRef  string
-	HeadRepo string // full path of the head repository; empty if unknown or deleted
+	Assignee string
+	Head     string
+	Limit    int // 0 means the adapter's cap
+}
+
+// ChangedFile is one file a pull request touches. Status is added, modified,
+// deleted or renamed. HasStats is false when the provider reports no line counts.
+type ChangedFile struct {
+	Path      string
+	OldPath   string // set for renames
+	Status    string
+	Additions int
+	Deletions int
+	HasStats  bool
+}
+
+// CommitSummary is a commit of a pull request, oldest first in a list.
+type CommitSummary struct {
+	SHA     string
+	Subject string
+}
+
+// Review states, derived from the individual reviews.
+const (
+	ReviewPending          = ""                  // nobody approved or asked for changes yet
+	ReviewApproved         = "approved"          // approved and nothing blocks it
+	ReviewChangesRequested = "changes requested" // someone asked for changes
+)
+
+// Review summarises what reviewers decided.
+type Review struct {
+	State            string
+	Approvals        []string
+	ChangesRequested []string
 }
 
 // NewPullRequest describes a pull/merge request to create.
@@ -85,6 +152,14 @@ type Provider interface {
 	GetPullRequest(ctx context.Context, repo Repo, number int) (PullRequest, error)
 	CreatePullRequest(ctx context.Context, repo Repo, npr NewPullRequest) (PullRequest, error)
 	ListOpenPullRequests(ctx context.Context, repo Repo) (prs []PullRequest, truncated bool, err error)
+	// ListPullRequests lists requests newest first, filtered by opts.
+	ListPullRequests(ctx context.Context, repo Repo, opts ListOptions) (prs []PullRequest, truncated bool, err error)
+	// CurrentUser is the login the token belongs to; it needs a token.
+	CurrentUser(ctx context.Context) (string, error)
+	ChangedFiles(ctx context.Context, repo Repo, number int) (files []ChangedFile, truncated bool, err error)
+	// Commits returns the request's commits, oldest first.
+	Commits(ctx context.Context, repo Repo, number int) (commits []CommitSummary, truncated bool, err error)
+	Reviews(ctx context.Context, repo Repo, number int) (Review, error)
 	ListProtectedBranches(ctx context.Context, repo Repo) (protected map[string]bool, truncated bool, err error)
 }
 

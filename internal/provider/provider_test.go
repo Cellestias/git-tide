@@ -23,3 +23,16 @@ func TestDetectName(t *testing.T) {
 		}
 	}
 }
+
+func TestValidState(t *testing.T) {
+	for _, s := range []string{StateOpen, StateClosed, StateMerged, StateAll} {
+		if !ValidState(s) {
+			t.Errorf("%q should be valid", s)
+		}
+	}
+	for _, s := range []string{"", "opened", "OPEN", "draft"} {
+		if ValidState(s) {
+			t.Errorf("%q should be invalid", s)
+		}
+	}
+}
