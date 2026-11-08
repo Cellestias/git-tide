@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -257,5 +258,62 @@ func TestStatusWithoutRequestAndDetachedHead(t *testing.T) {
 	err = Status(context.Background(), repo, domain.Default(), &fakeHost{}, output.Printer{Out: &o, Err: &e})
 	if apperr.CodeOf(err) != apperr.CodeUnsafeRepo {
 		t.Errorf("detached: %v", err)
+	}
+}
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// With colour on, the text is the plain text plus codes, and the states carry
+// their colours.
+func TestColouredOutputKeepsTheText(t *testing.T) {
+	merged := sample()
+	merged.Number, merged.State, merged.Draft = 41, provider.StateMerged, false
+	closed := sample()
+	closed.Number, closed.State, closed.Draft = 40, provider.StateClosed, false
+	h := &fakeHost{
+		prs:     []provider.PullRequest{sample(), merged, closed},
+		single:  sample(),
+		review:  provider.Review{State: provider.ReviewChangesRequested, ChangesRequested: []string{"dani"}},
+		files:   []provider.ChangedFile{{Path: "a.go", Status: "added", Additions: 3, HasStats: true}},
+		commits: []provider.CommitSummary{{SHA: "abcdef123456", Subject: "feat: login"}},
+	}
+	both := func(fn func(context.Context, *repository.Repository, domain.Config, output.Printer) error) (plain, colour string) {
+		for _, on := range []bool{false, true} {
+			repo, _, _ := setup(t)
+			var out, errOut bytes.Buffer
+			if err := fn(context.Background(), repo, domain.Default(), output.Printer{Out: &out, Err: &errOut, ColorOut: on, ColorErr: on}); err != nil {
+				t.Fatal(err)
+			}
+			if on {
+				colour = out.String()
+			} else {
+				plain = out.String()
+			}
+		}
+		return plain, colour
+	}
+
+	plain, colour := both(func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
+		return List(ctx, repo, cfg, h, ListOptions{State: "all"}, p)
+	})
+	if ansiRe.ReplaceAllString(colour, "") != plain {
+		t.Errorf("colour changed the list layout:\n%q\nvs\n%q", ansiRe.ReplaceAllString(colour, ""), plain)
+	}
+	for _, want := range []string{"\x1b[2mopen (draft)", "\x1b[35mmerged", "\x1b[31mclosed"} {
+		if !strings.Contains(colour, want) {
+			t.Errorf("list lacks %q:\n%q", want, colour)
+		}
+	}
+
+	plain, colour = both(func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
+		return View(ctx, repo, cfg, h, "42", p)
+	})
+	if ansiRe.ReplaceAllString(colour, "") != plain {
+		t.Errorf("colour changed the view text:\n%q\nvs\n%q", ansiRe.ReplaceAllString(colour, ""), plain)
+	}
+	for _, want := range []string{"\x1b[31mchanges requested by dani", "\x1b[32mA\x1b[0m", "\x1b[32m+3\x1b[0m", "\x1b[1mCommits"} {
+		if !strings.Contains(colour, want) {
+			t.Errorf("view lacks %q:\n%q", want, colour)
+		}
 	}
 }

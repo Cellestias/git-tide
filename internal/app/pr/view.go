@@ -53,32 +53,32 @@ func View(ctx context.Context, repo *repository.Repository, cfg domain.Config, c
 		p.Warn("cannot read commits: %s", clean(cerr.Error()))
 	}
 
-	p.Line("%s %s", ref(c, x.Number), clean(x.Title))
-	p.Line("%s", clean(x.URL))
+	p.Line("%s %s", p.Bold(ref(c, x.Number)), p.Bold(clean(x.Title)))
+	p.Line("%s", p.Dim(clean(x.URL)))
 	p.Line("")
-	p.Line("state:      %s", stateLabel(x))
+	p.Line("state:      %s", paintState(p, stateLabel(x), x))
 	p.Line("author:     %s", clean(x.Author))
 	p.Line("assignees:  %s", joinOrDash(x.Assignees))
 	p.Line("branches:   %s → %s%s", clean(x.HeadRef), clean(x.BaseRef), forkNote(x, hosted))
 	p.Line("created:    %s", when(x.CreatedAt))
 	p.Line("updated:    %s", when(x.UpdatedAt))
 	if rerr == nil {
-		p.Line("review:     %s", reviewLine(review, x.Reviewers))
+		p.Line("review:     %s", paintReview(p, reviewLine(review, x.Reviewers), review))
 	}
 	if body := formatBody(x.Body); body != "" {
 		p.Line("")
-		p.Line("Description")
+		p.Line("%s", p.Bold("Description"))
 		p.Line("%s", body)
 	}
 	if ferr == nil {
 		p.Line("")
-		p.Line("%s", filesHeader(files, ftrunc))
+		p.Line("%s", p.Bold(filesHeader(files, ftrunc)))
 		for i, f := range files {
 			if i == maxViewFiles {
 				p.Line("  … and %d more", len(files)-maxViewFiles)
 				break
 			}
-			p.Line("  %s", fileLine(f))
+			p.Line("  %s", fileLine(p, f))
 		}
 	}
 	if cerr == nil {
@@ -87,7 +87,7 @@ func View(ctx context.Context, repo *repository.Repository, cfg domain.Config, c
 			more = "+"
 		}
 		p.Line("")
-		p.Line("Commits (%d%s)", len(commits), more)
+		p.Line("%s", p.Bold(fmt.Sprintf("Commits (%d%s)", len(commits), more)))
 		for i, cm := range commits {
 			if i == maxViewCommits {
 				p.Line("  … and %d more", len(commits)-maxViewCommits)
@@ -149,17 +149,25 @@ func filesHeader(files []provider.ChangedFile, truncated bool) string {
 	return fmt.Sprintf("Changed files (%d%s)", len(files), more)
 }
 
-func fileLine(f provider.ChangedFile) string {
+func fileLine(p output.Printer, f provider.ChangedFile) string {
 	letter := map[string]string{"added": "A", "deleted": "D", "renamed": "R"}[f.Status]
 	if letter == "" {
 		letter = "M"
+	}
+	switch letter {
+	case "A":
+		letter = p.Green(letter)
+	case "D":
+		letter = p.Red(letter)
+	default:
+		letter = p.Yellow(letter)
 	}
 	name := clean(f.Path)
 	if f.OldPath != "" && f.OldPath != f.Path {
 		name = clean(f.OldPath) + " → " + name
 	}
 	if f.HasStats {
-		return fmt.Sprintf("%s  %s  +%d −%d", letter, name, f.Additions, f.Deletions)
+		return fmt.Sprintf("%s  %s  %s %s", letter, name, p.Green(fmt.Sprintf("+%d", f.Additions)), p.Red(fmt.Sprintf("−%d", f.Deletions)))
 	}
 	return letter + "  " + name
 }

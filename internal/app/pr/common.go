@@ -12,6 +12,7 @@ import (
 	"github.com/cellestias/git-tide/internal/apperr"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/git/repository"
+	"github.com/cellestias/git-tide/internal/output"
 	"github.com/cellestias/git-tide/internal/provider"
 )
 
@@ -85,6 +86,33 @@ func reviewLine(rv provider.Review, requested []string) string {
 		parts = append(parts, "waiting on "+strings.Join(requested, ", "))
 	}
 	return clean(strings.Join(parts, "; "))
+}
+
+// paintState colours a request state like the hosting sites do: open green,
+// closed red, merged purple, drafts dim.
+func paintState(p output.Printer, text string, pr provider.PullRequest) string {
+	switch {
+	case pr.State == provider.StateOpen && pr.Draft:
+		return p.Dim(text)
+	case pr.State == provider.StateOpen:
+		return p.Green(text)
+	case pr.State == provider.StateClosed:
+		return p.Red(text)
+	case pr.State == provider.StateMerged:
+		return p.Magenta(text)
+	}
+	return text
+}
+
+// paintReview colours a review line by its outcome.
+func paintReview(p output.Printer, text string, rv provider.Review) string {
+	switch rv.State {
+	case provider.ReviewApproved:
+		return p.Green(text)
+	case provider.ReviewChangesRequested:
+		return p.Red(text)
+	}
+	return p.Yellow(text)
 }
 
 // stateLabel is the state shown to the user, with the draft marker.
