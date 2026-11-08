@@ -743,3 +743,50 @@ func TestPRWorkflowGitLabEndToEnd(t *testing.T) {
 		t.Fatal("--reset --yes did not reset")
 	}
 }
+
+func TestPRUsesDescriptionTemplate(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"iid":8,"web_url":"https://gitlab.com/acme/group/tool/-/merge_requests/8"}`))
+	}))
+	defer srv.Close()
+	dir, _ := gitlabRepo(t)
+	bin := filepath.Join(binDir, "gtide")
+	env := []string{"TIDE_GITLAB_API_URL=" + srv.URL + "/api/v4", "GITLAB_TOKEN=glpat-test", "GH_TOKEN=", "GITHUB_TOKEN="}
+	testutil.WriteFile(t, dir, "description.pr.md", "# feat: {{branch}}\n\n## Summary\n{{commits}}\n\n- [ ] tests\n")
+
+	// a script (stdin is a pipe): no free-text prompts, the template is used
+	out, code := runEnv(t, dir, env, "y\n", bin, "pr")
+	if code != 0 || !strings.Contains(out, "merge_requests/8") {
+		t.Fatalf("pr: %d\n%s", code, out)
+	}
+	if got["title"] != "feat: feature/pay" || got["description"] != "## Summary\n- feat: add pay\n\n- [ ] tests" {
+		t.Fatalf("request: %v", got)
+	}
+	if strings.Contains(out, "Title (Enter") || strings.Contains(out, "Body (Enter") {
+		t.Fatalf("prompted although stdin is not a terminal:\n%s", out)
+	}
+
+	// flags still win for their field
+	got = nil
+	if out, code = runEnv(t, dir, env, "", bin, "pr", "--yes", "--title", "Flag title"); code != 0 {
+		t.Fatalf("pr --title: %d\n%s", code, out)
+	}
+	if got["title"] != "Flag title" || !strings.Contains(got["description"].(string), "## Summary") {
+		t.Fatalf("request: %v", got)
+	}
+
+	// an unusable template stops before anything is created
+	if err := os.Remove(filepath.Join(dir, "description.pr.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/hosts", filepath.Join(dir, "description.pr.md")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	got = nil
+	if out, code = runEnv(t, dir, env, "", bin, "pr", "--yes"); code != 3 || got != nil {
+		t.Fatalf("symlinked template: %d got=%v\n%s", code, got, out)
+	}
+}

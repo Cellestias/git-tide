@@ -389,7 +389,11 @@ func (e *env) prCmd() *cobra.Command {
 		Short: "Push the current branch and open a Pull Request / Merge Request",
 		Long: "Push the current branch and open a Pull Request (GitHub) or Merge Request (GitLab) against its base branch\n" +
 			"(from .tide.yml, or --base). The provider comes from `provider` in .tide.yml, detected from the remote when \"auto\".\n" +
-			"The title defaults to the commit subject (one commit) or the branch name; the body lists the commits.\n" +
+			"In a terminal it asks for the title and the body; an empty answer keeps the default: the commit subject (one commit)\n" +
+			"or the branch name for the title, the list of commits for the body. If description.pr.md exists at the repository root\n" +
+			"it asks instead whether to build the request from that file (first line `# Title`, the rest is the body; placeholders\n" +
+			"{{commits}}, {{branch}}, {{base}} and {{commit_count}}). --title and --body skip their prompts, and --yes or a\n" +
+			"non-interactive stdin asks nothing and uses the file when present, else the defaults.\n" +
 			"Requires the provider token (GITHUB_TOKEN / GITLAB_TOKEN, or provider_token in secret.tide.yml; .env at the repository root\n" +
 			"also works) with write access. Asks for confirmation unless --yes is given.\n\n" +
 			"Subcommands: `pr list`, `pr view <id>` and `pr status` read from the provider; `gtide review <id>` checks a request out.",
@@ -410,6 +414,9 @@ func (e *env) prCmd() *cobra.Command {
 			}
 			if !yes {
 				opts.Confirm = e.confirm
+				if e.interactive() {
+					opts.Ask = e.ask
+				}
 			}
 			return pr.Run(cmd.Context(), repo, cfg, client, opts, e.p)
 		},
