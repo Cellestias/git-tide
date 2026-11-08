@@ -2,8 +2,6 @@ package pr
 
 import (
 	"context"
-	"fmt"
-	"text/tabwriter"
 
 	"github.com/cellestias/git-tide/internal/apperr"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
@@ -69,12 +67,17 @@ func List(ctx context.Context, repo *repository.Repository, cfg domain.Config, c
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(p.Out, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "ID\tTITLE\tAUTHOR\tSTATE\tSOURCE\tTARGET")
+	rows := [][]string{{"ID", "TITLE", "AUTHOR", "STATE", "SOURCE", "TARGET"}}
 	for _, x := range prs {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", ref(c, x.Number), ellipsize(clean(x.Title), maxListTitle),
-			clean(x.Author), stateLabel(x), clean(x.HeadRef), clean(x.BaseRef))
+		rows = append(rows, []string{ref(c, x.Number), ellipsize(clean(x.Title), maxListTitle),
+			clean(x.Author), stateLabel(x), clean(x.HeadRef), clean(x.BaseRef)})
 	}
-	_ = tw.Flush()
+	p.Table(rows, func(row, col int, cell string) string {
+		switch col {
+		case 0, 3:
+			return paintState(p, cell, prs[row-1])
+		}
+		return cell
+	})
 	return nil
 }

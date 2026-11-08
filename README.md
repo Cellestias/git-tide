@@ -147,6 +147,10 @@ gtide pr status                       # where is it? review state, pending revie
 
 Commit `.tide.yml` so the whole team shares the same rules.
 
+### Colours
+
+Output uses a few colours when it goes to a terminal: `✓` green, `!` yellow, `✗` red, and in `gtide pr` the request state (open green, closed red, merged purple, draft dim) and the review outcome (approved green, changes requested red, otherwise yellow). Pipes, files and CI get plain text. Set `NO_COLOR=1` to turn colours off, or `CLICOLOR_FORCE=1` to keep them when piping (for example into `less -R`). There is no colour on Windows.
+
 ## Commands
 
 Run `gtide <command> --help` for the built-in help.

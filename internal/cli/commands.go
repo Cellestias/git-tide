@@ -514,13 +514,13 @@ func (e *env) doctorCmd() *cobra.Command {
 				case doctor.OK:
 					e.p.Success("%s: %s", c.Name, c.Detail)
 				case doctor.Warn:
-					e.p.Line("! %s: %s", c.Name, c.Detail)
+					e.p.Line("%s %s: %s", e.p.Yellow("!"), c.Name, c.Detail)
 				case doctor.Fail:
 					failed = true
-					e.p.Line("✗ %s: %s", c.Name, c.Detail)
+					e.p.Line("%s %s: %s", e.p.Red("✗"), c.Name, c.Detail)
 				}
 				if c.Hint != "" && c.Level != doctor.OK {
-					e.p.Line("    hint: %s", c.Hint)
+					e.p.Line("    %s", e.p.Dim("hint: "+c.Hint))
 				}
 			}
 			if failed {

@@ -50,15 +50,15 @@ func Status(ctx context.Context, repo *repository.Repository, cfg domain.Config,
 		return nil
 	}
 
-	p.Line("%s %s", ref(c, x.Number), clean(x.Title))
-	p.Line("state:     %s", stateLabel(*x))
+	p.Line("%s %s", p.Bold(ref(c, x.Number)), p.Bold(clean(x.Title)))
+	p.Line("state:     %s", paintState(p, stateLabel(*x), *x))
 	p.Line("branches:  %s → %s", clean(x.HeadRef), clean(x.BaseRef))
 	if review, err := c.Reviews(ctx, hosted, x.Number); err != nil {
 		p.Warn("cannot read reviews: %s", clean(err.Error()))
 	} else {
-		p.Line("review:    %s", reviewLine(review, nil))
+		p.Line("review:    %s", paintReview(p, reviewLine(review, nil), review))
 	}
 	p.Line("requested: %s", joinOrDash(x.Reviewers))
-	p.Line("url:       %s", clean(x.URL))
+	p.Line("url:       %s", p.Dim(clean(x.URL)))
 	return nil
 }
