@@ -23,6 +23,11 @@ type fakePRs struct {
 	pr             github.PullRequest
 	err            error
 	got            github.Repo
+	review         provider.Review
+}
+
+func (f *fakePRs) Reviews(context.Context, github.Repo, int) (provider.Review, error) {
+	return f.review, nil
 }
 
 func (f *fakePRs) GetPullRequest(_ context.Context, r github.Repo, n int) (github.PullRequest, error) {
@@ -54,9 +59,15 @@ func fake() *fakePRs {
 }
 
 func run(repo *repository.Repository, prs provider.Provider, opts Options) (string, error) {
+	out, _, err := runBoth(repo, prs, opts)
+	return out, err
+}
+
+// runBoth also returns what went to the error stream (warnings).
+func runBoth(repo *repository.Repository, prs provider.Provider, opts Options) (string, string, error) {
 	var out, errOut bytes.Buffer
 	err := Run(context.Background(), repo, domain.Default(), prs, opts, output.Printer{Out: &out, Err: &errOut})
-	return out.String(), err
+	return out.String(), errOut.String(), err
 }
 
 func TestReviewCreatesBranch(t *testing.T) {
@@ -155,5 +166,101 @@ func TestReviewErrors(t *testing.T) {
 	testutil.Run(t, dir, "remote", "set-url", "origin", "https://gitlab.com/a/b.git")
 	if _, err := run(repo, fake(), Options{Ref: "1"}); apperr.CodeOf(err) != apperr.CodeConfig {
 		t.Errorf("non-github: %v", err)
+	}
+}
+
+func TestReviewShowsMetadataAndDiffSummary(t *testing.T) {
+	repo, _, _ := setup(t)
+	prs := fake()
+	prs.pr.Assignees = []string{"bia"}
+	prs.pr.Reviewers = []string{"caio"}
+	prs.pr.URL = "https://github.com/acme/tool/pull/1"
+	prs.review = provider.Review{State: provider.ReviewApproved, Approvals: []string{"dani"}}
+	out, err := run(repo, prs, Options{Ref: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"bia", "approved by dani", "waiting on caio", "pull/1", "pr.txt", "1 file changed", "next:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "+from pr") {
+		t.Errorf("full patch shown without --diff:\n%s", out)
+	}
+}
+
+func TestReviewDiffPrintsPatch(t *testing.T) {
+	repo, _, _ := setup(t)
+	out, err := run(repo, fake(), Options{Ref: "1", Diff: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "+from pr") || !strings.Contains(out, "diff --git") {
+		t.Errorf("patch missing:\n%s", out)
+	}
+	if strings.Contains(out, "next:") {
+		t.Errorf("hint shown although the diff was printed:\n%s", out)
+	}
+}
+
+func TestReviewMarksForks(t *testing.T) {
+	repo, _, _ := setup(t)
+	prs := fake()
+	prs.pr.HeadRepo = "someone/tool"
+	out, err := run(repo, prs, Options{Ref: "1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "(fork: someone/tool)") {
+		t.Errorf("fork not flagged:\n%s", out)
+	}
+}
+
+func TestResetWarnsAndAsksBeforeDiscarding(t *testing.T) {
+	repo, dir, _ := setup(t)
+	if _, err := run(repo, fake(), Options{Ref: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, dir, "mine.txt", "mine\n")
+	testutil.Commit(t, dir, "feat: my review fix")
+	mine := testutil.Run(t, dir, "rev-parse", "HEAD")
+
+	// declined: nothing is discarded, and the warning names the commit
+	asked := 0
+	no := func(string) (bool, error) { asked++; return false, nil }
+	_, warn, err := runBoth(repo, fake(), Options{Ref: "1", Reset: true, Confirm: no})
+	if apperr.CodeOf(err) != apperr.CodeGeneral || asked != 1 {
+		t.Fatalf("declined: err=%v asked=%d", err, asked)
+	}
+	if !strings.Contains(warn, "discard 1 local commit") || !strings.Contains(warn, "feat: my review fix") {
+		t.Errorf("warning does not say what is lost:\n%s", warn)
+	}
+	if testutil.Run(t, dir, "rev-parse", "HEAD") != mine {
+		t.Error("commit lost although the user declined")
+	}
+
+	// accepted: the branch is reset, and the old tip was printed for recovery
+	yes := func(string) (bool, error) { return true, nil }
+	_, warn, err = runBoth(repo, fake(), Options{Ref: "1", Reset: true, Confirm: yes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(warn, mine[:7]) {
+		t.Errorf("previous tip %s not shown:\n%s", mine[:7], warn)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "mine.txt")); err == nil {
+		t.Error("--reset should drop the local commit")
+	}
+}
+
+func TestResetWithNothingToLoseDoesNotAsk(t *testing.T) {
+	repo, _, _ := setup(t)
+	if _, err := run(repo, fake(), Options{Ref: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	confirm := func(string) (bool, error) { t.Error("asked although nothing is lost"); return false, nil }
+	if _, err := run(repo, fake(), Options{Ref: "1", Reset: true, Confirm: confirm}); err != nil {
+		t.Fatal(err)
 	}
 }

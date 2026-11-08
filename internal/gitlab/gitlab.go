@@ -30,6 +30,10 @@ type (
 	NewPullRequest = provider.NewPullRequest
 	Ref            = provider.Ref
 	ErrValidation  = provider.ErrValidation
+	ListOptions    = provider.ListOptions
+	ChangedFile    = provider.ChangedFile
+	CommitSummary  = provider.CommitSummary
+	Review         = provider.Review
 )
 
 // ErrNotFound is returned when the project or merge request is not accessible.
@@ -251,6 +255,9 @@ func (c *Client) eachPage(ctx context.Context, endpoint string, handle func([]js
 			return false, fmt.Errorf("decode GitLab API response: %w", err)
 		}
 		if err := handle(items); err != nil {
+			if errors.Is(err, errStop) {
+				return false, nil
+			}
 			return false, fmt.Errorf("decode GitLab API response: %w", err)
 		}
 		if len(items) < pageSize {
@@ -343,29 +350,50 @@ func validationMessage(body []byte) string {
 
 func decode(body []byte, repo Repo) (PullRequest, error) {
 	var raw struct {
-		IID             int    `json:"iid"`
-		Title           string `json:"title"`
-		State           string `json:"state"`
-		WebURL          string `json:"web_url"`
-		SourceBranch    string `json:"source_branch"`
-		TargetBranch    string `json:"target_branch"`
-		SourceProjectID int    `json:"source_project_id"`
-		TargetProjectID int    `json:"target_project_id"`
+		IID             int       `json:"iid"`
+		Title           string    `json:"title"`
+		Description     string    `json:"description"`
+		State           string    `json:"state"`
+		Draft           bool      `json:"draft"`
+		WIP             bool      `json:"work_in_progress"`
+		WebURL          string    `json:"web_url"`
+		SourceBranch    string    `json:"source_branch"`
+		TargetBranch    string    `json:"target_branch"`
+		SourceProjectID int       `json:"source_project_id"`
+		TargetProjectID int       `json:"target_project_id"`
+		CreatedAt       time.Time `json:"created_at"`
+		UpdatedAt       time.Time `json:"updated_at"`
 		Author          struct {
 			Username string `json:"username"`
 		} `json:"author"`
+		Assignees []struct {
+			Username string `json:"username"`
+		} `json:"assignees"`
+		Reviewers []struct {
+			Username string `json:"username"`
+		} `json:"reviewers"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return PullRequest{}, fmt.Errorf("decode GitLab API response: %w", err)
 	}
 	pr := PullRequest{
-		Number:  raw.IID,
-		Title:   raw.Title,
-		State:   raw.State,
-		URL:     raw.WebURL,
-		Author:  raw.Author.Username,
-		HeadRef: raw.SourceBranch,
-		BaseRef: raw.TargetBranch,
+		Number:    raw.IID,
+		Title:     raw.Title,
+		Body:      raw.Description,
+		State:     normalizeState(raw.State),
+		Draft:     raw.Draft || raw.WIP,
+		URL:       raw.WebURL,
+		Author:    raw.Author.Username,
+		HeadRef:   raw.SourceBranch,
+		BaseRef:   raw.TargetBranch,
+		CreatedAt: raw.CreatedAt,
+		UpdatedAt: raw.UpdatedAt,
+	}
+	for _, a := range raw.Assignees {
+		pr.Assignees = append(pr.Assignees, a.Username)
+	}
+	for _, r := range raw.Reviewers {
+		pr.Reviewers = append(pr.Reviewers, r.Username)
 	}
 	// Only a same-project source is reported as the repository itself, which is
 	// what callers use to tell fork requests apart.
@@ -375,10 +403,158 @@ func decode(body []byte, repo Repo) (PullRequest, error) {
 	return pr, nil
 }
 
+// normalizeState maps GitLab's opened/locked/closed/merged to Tide's states.
+func normalizeState(s string) string {
+	switch s {
+	case "opened", "locked":
+		return provider.StateOpen
+	}
+	return s
+}
+
 func redactURLErr(err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) {
 		return ue.Err
 	}
 	return err
+}
+
+// errStop ends a paginated walk early; it is not an error for the caller.
+var errStop = errors.New("stop")
+
+// ListPullRequests lists merge requests newest first, filtered by opts.
+func (c *Client) ListPullRequests(ctx context.Context, repo Repo, opts ListOptions) (prs []PullRequest, truncated bool, err error) {
+	state := opts.State
+	if state == "" {
+		state = provider.StateOpen
+	}
+	api := map[string]string{provider.StateOpen: "opened", provider.StateClosed: "closed", provider.StateMerged: "merged", provider.StateAll: "all"}[state]
+	if api == "" {
+		return nil, false, fmt.Errorf("unknown state %q", state)
+	}
+	q := url.Values{"state": {api}, "order_by": {"created_at"}, "sort": {"desc"}}
+	if opts.Author != "" {
+		q.Set("author_username", opts.Author)
+	}
+	if opts.Assignee != "" {
+		q.Set("assignee_username", opts.Assignee)
+	}
+	if opts.Head != "" {
+		q.Set("source_branch", opts.Head)
+	}
+	truncated, err = c.eachPage(ctx, c.mrsURL(repo)+"?"+q.Encode(), func(items []json.RawMessage) error {
+		for _, it := range items {
+			pr, err := decode(it, repo)
+			if err != nil {
+				return err
+			}
+			prs = append(prs, pr)
+			if opts.Limit > 0 && len(prs) >= opts.Limit {
+				return errStop
+			}
+		}
+		return nil
+	})
+	return prs, truncated, err
+}
+
+// CurrentUser returns the username the token belongs to.
+func (c *Client) CurrentUser(ctx context.Context) (string, error) {
+	body, err := c.do(ctx, http.MethodGet, c.BaseURL+"/user", nil)
+	if err != nil {
+		return "", err
+	}
+	var u struct {
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal(body, &u); err != nil || u.Username == "" {
+		return "", fmt.Errorf("decode GitLab API response: no username")
+	}
+	return u.Username, nil
+}
+
+// ChangedFiles lists the files of a merge request. GitLab reports no line
+// counts here, so HasStats stays false.
+func (c *Client) ChangedFiles(ctx context.Context, repo Repo, number int) (files []ChangedFile, truncated bool, err error) {
+	truncated, err = c.eachPage(ctx, fmt.Sprintf("%s/%d/diffs", c.mrsURL(repo), number), func(items []json.RawMessage) error {
+		for _, it := range items {
+			var d struct {
+				OldPath string `json:"old_path"`
+				NewPath string `json:"new_path"`
+				New     bool   `json:"new_file"`
+				Renamed bool   `json:"renamed_file"`
+				Deleted bool   `json:"deleted_file"`
+			}
+			if err := json.Unmarshal(it, &d); err != nil {
+				return err
+			}
+			f := ChangedFile{Path: d.NewPath, Status: "modified"}
+			switch {
+			case d.New:
+				f.Status = "added"
+			case d.Deleted:
+				f.Status, f.Path = "deleted", d.OldPath
+			case d.Renamed:
+				f.Status, f.OldPath = "renamed", d.OldPath
+			}
+			files = append(files, f)
+		}
+		return nil
+	})
+	return files, truncated, err
+}
+
+// Commits lists the commits of a merge request, oldest first (GitLab returns
+// them newest first).
+func (c *Client) Commits(ctx context.Context, repo Repo, number int) (commits []CommitSummary, truncated bool, err error) {
+	truncated, err = c.eachPage(ctx, fmt.Sprintf("%s/%d/commits", c.mrsURL(repo), number), func(items []json.RawMessage) error {
+		for _, it := range items {
+			var cm struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			}
+			if err := json.Unmarshal(it, &cm); err != nil {
+				return err
+			}
+			commits = append(commits, CommitSummary{SHA: cm.ID, Subject: cm.Title})
+		}
+		return nil
+	})
+	for i, j := 0, len(commits)-1; i < j; i, j = i+1, j-1 {
+		commits[i], commits[j] = commits[j], commits[i]
+	}
+	return commits, truncated, err
+}
+
+// Reviews reads the merge request's approvals. GitLab has no "changes
+// requested" state in its REST API, so the result is approved or pending. A
+// project without the approvals feature yields a pending, empty review.
+func (c *Client) Reviews(ctx context.Context, repo Repo, number int) (Review, error) {
+	body, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s/%d/approvals", c.mrsURL(repo), number), nil)
+	if errors.Is(err, ErrNotFound) {
+		return Review{}, nil
+	}
+	if err != nil {
+		return Review{}, err
+	}
+	var a struct {
+		ApprovedBy []struct {
+			User struct {
+				Username string `json:"username"`
+			} `json:"user"`
+		} `json:"approved_by"`
+		ApprovalsLeft *int `json:"approvals_left"`
+	}
+	if err := json.Unmarshal(body, &a); err != nil {
+		return Review{}, fmt.Errorf("decode GitLab API response: %w", err)
+	}
+	var rv Review
+	for _, ap := range a.ApprovedBy {
+		rv.Approvals = append(rv.Approvals, ap.User.Username)
+	}
+	if len(rv.Approvals) > 0 && (a.ApprovalsLeft == nil || *a.ApprovalsLeft == 0) {
+		rv.State = provider.ReviewApproved
+	}
+	return rv, nil
 }

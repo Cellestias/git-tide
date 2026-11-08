@@ -142,6 +142,7 @@ git commit -m "feat: add login form" # hooks validate the message and scan for s
 gtide push                            # publish the branch
 gtide update                          # bring the base branch into feature/login
 gtide pr                              # push and open a Pull Request
+gtide pr status                       # where is it? review state, pending reviewers, URL
 ```
 
 Commit `.tide.yml` so the whole team shares the same rules.
@@ -298,14 +299,17 @@ Checks out a GitHub Pull Request or GitLab Merge Request on a local review branc
 gtide review 123
 gtide review '#123'
 gtide review https://github.com/acme/tool/pull/123
+gtide review 123 --diff     # also print the whole patch
+gtide review 123 --reset    # move the review branch back to the PR (asks first)
 ```
 
-- Fetches `refs/pull/<n>/head`, so it works for PRs from forks.
+- Fetches `refs/pull/<n>/head` (`refs/merge-requests/<n>/head` on GitLab), so it works for requests from forks; the output marks them `(fork: owner/repo)`.
 - Creates the review branch, or fast-forwards it if it already exists.
-- If the review branch has local commits that are not in the PR, Tide refuses. Re-run with `--reset` to discard them.
-- Prints title, author, state, source and target branches, and a suggested `git diff` command.
-- Requires a clean tracked working tree. A full PR URL must point to the configured remote's repository.
-- Reads the metadata from the provider API. Public repositories work without a token; private ones need the provider token. On GitLab, `<PR>` can also be `!123` or a `.../-/merge_requests/123` URL, and the head is fetched from `refs/merge-requests/<n>/head`.
+- Prints title, author, state, source and target branches, assignees, review status, and the URL.
+- Fetches the base branch and prints a per-file summary of what the request changes (`git diff --stat <remote>/<base>...HEAD`). `--diff` prints the full patch too. External diff drivers and textconv filters are disabled, and control characters are stripped, because the content comes from a contributor.
+- If the review branch has local commits that are not in the request, Tide refuses. `--reset` is the way out, and it never discards silently: it lists the commits that would be lost, prints the current tip (so you can keep it with `git branch <name> <sha>`), and asks `[y/N]`. `--yes` skips the question. When nothing would be lost it does not ask.
+- Requires a clean tracked working tree. A full URL must point to the configured remote's repository.
+- Reads the metadata from the provider API. Public repositories work without a token; private ones need the provider token. On GitLab, `<PR>` can also be `!123` or a `.../-/merge_requests/123` URL.
 
 Return to your previous branch with `git switch <branch>`.
 
@@ -367,6 +371,33 @@ Flow:
 5. Pushes the branch (your `pre-push` hook still applies) and creates the PR.
 
 Defaults: the title is the commit subject when the branch has exactly one commit, otherwise the humanised branch name (`feature/login-page` becomes "Login page"). The body lists the commit subjects. If the provider rejects the request after the push (for example, a request already exists for the branch), the branch stays pushed and the error says so.
+
+### `gtide pr list`
+
+Lists the repository's Pull Requests or Merge Requests, newest first: ID (`#12` on GitHub, `!12` on GitLab), title, author, state, source and target branch. The output has the same columns on both providers.
+
+```bash
+gtide pr list                          # open requests
+gtide pr list --state merged           # open, closed, merged or all
+gtide pr list --author me --limit 50   # `me` is the owner of the provider token
+gtide pr list --assignee alice
+```
+
+`--limit` defaults to 20 (maximum 100). Open drafts show as `open (draft)`. Public repositories need no token; `--author me` and `--assignee me` do, because Tide has to ask the provider who you are. On GitHub the author and assignee filters are applied by Tide after fetching, so on a very large repository a narrow filter can scan up to 1000 requests before it fills the limit.
+
+### `gtide pr view <id>`
+
+Shows one request: title, description, author, assignees, state, source and target branches (with a fork marker), creation and update dates, review status, changed files with line counts, the commits, and the URL. `<id>` is a number, `#number`, `!number` (GitLab), or the request URL.
+
+```bash
+gtide pr view 42
+```
+
+Review status is one of `approved by ...`, `changes requested by ...`, or `review required`, followed by `waiting on ...` for reviewers still requested. GitLab's REST API has no "changes requested" state, so there the status is `approved` or `review required`, and GitLab reports no per-file line counts. The description, files and commits are capped (lists show "… and N more"). When one of the extra lookups fails, Tide prints a warning and shows the rest.
+
+### `gtide pr status`
+
+Shows the request opened from the current branch, if there is one: title, state, review status, branches, outstanding review requests, and URL. An open request wins over a closed or merged one for the same branch; requests from forks are ignored. Without one it says so and suggests `gtide pr`.
 
 ### `gtide doctor`
 
@@ -443,6 +474,9 @@ Tide talks to GitHub and GitLab through the same commands (`pr`, `review`, `bran
 | Tide | GitHub | GitLab |
 |---|---|---|
 | `gtide pr` | Create Pull Request | Create Merge Request (`--draft` adds the `Draft:` title prefix) |
+| `gtide pr list` | List Pull Requests | List Merge Requests |
+| `gtide pr view <id>` | View Pull Request, files, commits, reviews | View Merge Request, diffs, commits, approvals |
+| `gtide pr status` | Pull Request of the current branch | Merge Request of the current branch |
 | `gtide review <n>` | View Pull Request, fetch `refs/pull/<n>/head` | View Merge Request, fetch `refs/merge-requests/<n>/head` |
 | `gtide branch --hosted` | List protected branches and open Pull Requests | List protected branches and open Merge Requests |
 
@@ -465,7 +499,7 @@ For a one-off exception, pass the base explicitly: `gtide update main` or `gtide
 
 ## Authentication
 
-`gtide pr` needs a token with write access to pull / merge requests; `gtide review` and `gtide branch --hosted` only need one for private repositories. Pushing uses Git's own authentication, not this token.
+`gtide pr` needs a token with write access to pull / merge requests; `gtide pr list`, `pr view`, `pr status`, `gtide review` and `gtide branch --hosted` only need one for private repositories (and `--author me` / `--assignee me` need one to resolve who you are). Pushing uses Git's own authentication, not this token.
 
 - **GitHub**: a fine-grained token with "Pull requests: Read and write" and "Contents: Read" on the repository, or a classic token with the `repo` scope.
 - **GitLab**: a personal, project or group access token with the `api` scope (role Developer or higher).
@@ -550,7 +584,7 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 - **Secrets stay out of output.** Tide never prints matched values, tokens, or credentials embedded in remote URLs.
 - **Tokens.** Tide reads the provider token from the environment or `.env` (see [Authentication](#authentication)) and never stores it. `secret.tide.yml` only references a variable, and a literal token there is rejected. Do not put tokens in `.tide.yml`.
 - **Repository configuration is untrusted input.** Tide bounds file size and pattern count, uses Go's RE2 regular expressions (no catastrophic backtracking), and validates branch names before passing them to Git. Git is always run with an argument list, never through a shell.
-- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API) touch the network, and each says so as it runs.
+- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API; `pr list`, `pr view` and `pr status` only call the API) touch the network, and each says so as it runs.
 - **GitHub and GitLab.** `review`, `pr` and `branch --hosted` support `github.com` and GitLab (gitlab.com or self-hosted). `TIDE_GITHUB_API_URL` and `TIDE_GITLAB_API_URL` point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing. GitHub Enterprise is not supported yet.
 - No telemetry.
 

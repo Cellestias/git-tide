@@ -93,7 +93,7 @@ func TestGetAndCreate(t *testing.T) {
 	repo := Repo{Owner: "group/sub", Name: "tool"}
 
 	pr, err := c.GetPullRequest(context.Background(), repo, 3)
-	if err != nil || pr.Number != 3 || pr.State != "opened" || pr.Author != "ana" || pr.HeadRef != "feature/x" || pr.BaseRef != "main" || pr.HeadRepo != "group/sub/tool" {
+	if err != nil || pr.Number != 3 || pr.State != "open" || pr.Author != "ana" || pr.HeadRef != "feature/x" || pr.BaseRef != "main" || pr.HeadRepo != "group/sub/tool" {
 		t.Fatalf("get = %+v, %v", pr, err)
 	}
 

@@ -34,14 +34,9 @@ type Options struct {
 
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, opts Options, p output.Printer) error {
 	noun := c.Noun()
-	ghRepo, err := provider.RepoFromRemote(ctx, repo, c, cfg.Remote)
-	if errors.Is(err, provider.ErrNoRemote) {
-		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not configured", cfg.Remote),
-			"add it with `git remote add` or change `remote` in .tide.yml", err)
-	}
+	ghRepo, err := hostedRepo(ctx, repo, cfg, c)
 	if err != nil {
-		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not a supported %s remote", cfg.Remote, c.Name()),
-			"check the remote URL, or set `provider` in .tide.yml", err)
+		return err
 	}
 
 	current, err := repo.CurrentBranch(ctx)
