@@ -11,14 +11,9 @@ import (
 	"github.com/cellestias/git-tide/internal/apperr"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/git/repository"
-	"github.com/cellestias/git-tide/internal/github"
 	"github.com/cellestias/git-tide/internal/output"
+	"github.com/cellestias/git-tide/internal/provider"
 )
-
-// PullRequests is the slice of the GitHub client this use case needs.
-type PullRequests interface {
-	GetPullRequest(ctx context.Context, repo github.Repo, number int) (github.PullRequest, error)
-}
 
 type Options struct {
 	// Ref is a PR number, "#number", or URL.
@@ -30,23 +25,24 @@ type Options struct {
 // BranchName is the predictable local branch used to review a PR.
 func BranchName(number int) string { return fmt.Sprintf("tide/review/pr-%d", number) }
 
-func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, prs PullRequests, opts Options, p output.Printer) error {
-	ref, err := github.ParsePRRef(opts.Ref)
+func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, prs provider.Provider, opts Options, p output.Printer) error {
+	ref, err := prs.ParseRef(opts.Ref)
 	if err != nil {
 		return apperr.Usage("%v", err)
 	}
 
-	ghRepo, err := github.RepoFromRemote(ctx, repo, cfg.Remote)
-	if errors.Is(err, github.ErrNoRemote) {
+	noun := prs.Noun()
+	ghRepo, err := provider.RepoFromRemote(ctx, repo, prs, cfg.Remote)
+	if errors.Is(err, provider.ErrNoRemote) {
 		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not configured", cfg.Remote),
 			"add it with `git remote add` or change `remote` in .tide.yml", err)
 	}
 	if err != nil {
-		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not a supported GitHub remote", cfg.Remote),
-			"only github.com remotes are supported", err)
+		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not a supported %s remote", cfg.Remote, prs.Name()),
+			"check the remote URL, or set `provider` in .tide.yml", err)
 	}
 	if ref.Repo != nil && !strings.EqualFold(ref.Repo.String(), ghRepo.String()) {
-		return apperr.Usage("pull request belongs to %s but remote %q is %s", ref.Repo, cfg.Remote, ghRepo)
+		return apperr.Usage(noun+" belongs to %s but remote %q is %s", ref.Repo, cfg.Remote, ghRepo)
 	}
 
 	current, err := repo.CurrentBranch(ctx)
@@ -59,22 +55,22 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, pr
 
 	p.Step("Reading %s#%d", ghRepo, ref.Number)
 	pr, err := prs.GetPullRequest(ctx, ghRepo, ref.Number)
-	if errors.Is(err, github.ErrNotFound) {
+	if errors.Is(err, provider.ErrNotFound) {
 		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s#%d not found or not accessible", ghRepo, ref.Number),
-			"for private repositories set GITHUB_TOKEN")
+			"for private repositories set "+prs.TokenEnv())
 	}
 	if err != nil {
-		return apperr.Wrap(apperr.CodeExternal, "cannot read pull request", "", err)
+		return apperr.Wrap(apperr.CodeExternal, "cannot read "+noun, "", err)
 	}
 
 	hidden := fmt.Sprintf("refs/tide/pr/%d", ref.Number)
-	p.Step("Fetching refs/pull/%d/head", ref.Number)
-	if err := repo.Fetch(ctx, cfg.Remote, fmt.Sprintf("+refs/pull/%d/head:%s", ref.Number, hidden)); err != nil {
-		return apperr.Wrap(apperr.CodeExternal, "cannot fetch the pull request head", "check your network and credentials", err)
+	p.Step("Fetching the %s head", noun)
+	if err := repo.Fetch(ctx, cfg.Remote, prs.ReviewRefspec(ref.Number, hidden)); err != nil {
+		return apperr.Wrap(apperr.CodeExternal, "cannot fetch the "+noun+" head", "check your network and credentials", err)
 	}
 
 	name := BranchName(ref.Number)
-	if err := checkoutReview(ctx, repo, name, hidden, current, opts.Reset); err != nil {
+	if err := checkoutReview(ctx, repo, name, hidden, current, opts.Reset, noun); err != nil {
 		return err
 	}
 
@@ -88,7 +84,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, pr
 	return nil
 }
 
-func checkoutReview(ctx context.Context, repo *repository.Repository, name, ref, current string, reset bool) error {
+func checkoutReview(ctx context.Context, repo *repository.Repository, name, ref, current string, reset bool, noun string) error {
 	exists, err := repo.LocalBranchExists(ctx, name)
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot inspect local branches", "", err)
@@ -111,7 +107,7 @@ func checkoutReview(ctx context.Context, repo *repository.Repository, name, ref,
 			return wrap(err)
 		}
 		if !ok {
-			return apperr.New(apperr.CodeUnsafeRepo, fmt.Sprintf("local %s has commits that are not in the pull request", name),
+			return apperr.New(apperr.CodeUnsafeRepo, fmt.Sprintf("local %s has commits that are not in the %s", name, noun),
 				"re-run with --reset to discard them, or rename the branch to keep them")
 		}
 		if current != name {

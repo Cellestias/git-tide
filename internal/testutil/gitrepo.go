@@ -2,6 +2,7 @@
 package testutil
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,7 +38,7 @@ func CommitAs(t testing.TB, dir, name, email, date, msg string) {
 }
 
 func tryRunEnv(dir string, extra []string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(context.Background(), "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",

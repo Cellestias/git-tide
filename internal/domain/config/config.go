@@ -10,6 +10,7 @@ import (
 
 	"github.com/cellestias/git-tide/internal/domain/branch"
 	"github.com/cellestias/git-tide/internal/domain/secret"
+	"github.com/cellestias/git-tide/internal/provider"
 )
 
 const (
@@ -20,12 +21,13 @@ const (
 
 	ConventionConventional = "conventional"
 
-	maxCustomPatterns = 100
+	maxCustomPatterns = 500
 	maxPatternLength  = 512
 )
 
 type Config struct {
 	Version  int      `yaml:"version"`
+	Provider string   `yaml:"provider"` // auto, github or gitlab
 	Remote   string   `yaml:"remote"`
 	Branches Branches `yaml:"branches"`
 	Update   Update   `yaml:"update"`
@@ -50,8 +52,12 @@ type Commits struct {
 }
 
 type Secrets struct {
-	Enabled        bool            `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
+	// CustomPatterns is accepted for backward compatibility. Prefer the
+	// `secrets.patterns` list in secret.tide.yml, which is not committed.
 	CustomPatterns []CustomPattern `yaml:"custom_patterns"`
+	// LocalPatterns come from secret.tide.yml. They are never part of .tide.yml.
+	LocalPatterns []CustomPattern `yaml:"-"`
 }
 
 type CustomPattern struct {
@@ -66,8 +72,9 @@ type Hooks struct {
 // Default returns the configuration used for every key a file omits.
 func Default() Config {
 	return Config{
-		Version: CurrentVersion,
-		Remote:  "origin",
+		Version:  CurrentVersion,
+		Provider: provider.Auto,
+		Remote:   "origin",
 		Branches: Branches{
 			DefaultBase: "main",
 			Protected:   []string{"main"},
@@ -80,7 +87,7 @@ func Default() Config {
 }
 
 var (
-	patternName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+	patternName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)
 	remoteName  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 )
 
@@ -94,6 +101,11 @@ func (c Config) Validate() error {
 
 	if c.Version != CurrentVersion {
 		bad("version", "unsupported version %d (expected %d)", c.Version, CurrentVersion)
+	}
+	switch c.Provider {
+	case provider.Auto, provider.GitHub, provider.GitLab:
+	default:
+		bad("provider", "must be %q, %q or %q, got %q", provider.Auto, provider.GitHub, provider.GitLab, c.Provider)
 	}
 	if !remoteName.MatchString(c.Remote) {
 		bad("remote", "invalid remote name %q", c.Remote)
@@ -125,35 +137,47 @@ func (c Config) Validate() error {
 	if c.Commits.Convention != ConventionConventional {
 		bad("commits.convention", "unsupported convention %q (only %q)", c.Commits.Convention, ConventionConventional)
 	}
-	if len(c.Secrets.CustomPatterns) > maxCustomPatterns {
-		bad("secrets.custom_patterns", "at most %d patterns are allowed", maxCustomPatterns)
-	}
-	seen := map[string]bool{}
-	for i, cp := range c.Secrets.CustomPatterns {
-		field := fmt.Sprintf("secrets.custom_patterns[%d]", i)
-		switch {
-		case !patternName.MatchString(cp.Name):
-			bad(field+".name", "must match %s, got %q", patternName, cp.Name)
-		case seen[cp.Name]:
-			bad(field+".name", "duplicate rule name %q", cp.Name)
-		}
-		seen[cp.Name] = true
-		if len(cp.Pattern) == 0 || len(cp.Pattern) > maxPatternLength {
-			bad(field+".pattern", "length must be between 1 and %d", maxPatternLength)
-			continue
-		}
-		if _, err := regexp.Compile(cp.Pattern); err != nil {
-			bad(field+".pattern", "invalid regular expression: %v", err)
-		}
-	}
+	errs = append(errs, ValidatePatterns("secrets.custom_patterns", c.Secrets.CustomPatterns)...)
+	errs = append(errs, ValidatePatterns("secret.tide.yml: secrets.patterns", c.Secrets.LocalPatterns)...)
 	return errors.Join(errs...)
 }
 
-// SecretRules returns built-in rules followed by the configured custom rules.
-// Call it only on a validated Config.
+// ValidatePatterns reports every problem in a list of custom secret patterns,
+// each prefixed with field.
+func ValidatePatterns(field string, patterns []CustomPattern) []error {
+	var errs []error
+	bad := func(f, format string, args ...any) {
+		errs = append(errs, fmt.Errorf("%s: %s", f, fmt.Sprintf(format, args...)))
+	}
+	if len(patterns) > maxCustomPatterns {
+		bad(field, "at most %d patterns are allowed", maxCustomPatterns)
+	}
+	seen := map[string]bool{}
+	for i, cp := range patterns {
+		f := fmt.Sprintf("%s[%d]", field, i)
+		switch {
+		case !patternName.MatchString(cp.Name):
+			bad(f+".name", "must match %s, got %q", patternName, cp.Name)
+		case seen[cp.Name]:
+			bad(f+".name", "duplicate rule name %q", cp.Name)
+		}
+		seen[cp.Name] = true
+		if len(cp.Pattern) == 0 || len(cp.Pattern) > maxPatternLength {
+			bad(f+".pattern", "length must be between 1 and %d", maxPatternLength)
+			continue
+		}
+		if _, err := regexp.Compile(cp.Pattern); err != nil {
+			bad(f+".pattern", "invalid regular expression: %v", err)
+		}
+	}
+	return errs
+}
+
+// SecretRules returns built-in rules followed by the custom rules from
+// .tide.yml and secret.tide.yml. Call it only on a validated Config.
 func (c Config) SecretRules() []secret.Rule {
 	rules := secret.BuiltinRules()
-	for _, cp := range c.Secrets.CustomPatterns {
+	for _, cp := range append(append([]CustomPattern{}, c.Secrets.CustomPatterns...), c.Secrets.LocalPatterns...) {
 		rules = append(rules, secret.Rule{Name: cp.Name, Pattern: regexp.MustCompile(cp.Pattern)})
 	}
 	return rules

@@ -3,6 +3,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -23,13 +24,16 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "gtide"), "../cmd/gtide")
+	build := exec.CommandContext(context.Background(), "go", "build", "-o", filepath.Join(dir, "gtide"), "../cmd/gtide")
 	if out, err := build.CombinedOutput(); err != nil {
 		os.Stderr.Write(out)
 		os.RemoveAll(dir)
 		os.Exit(1)
 	}
 	binDir = dir
+	// Hooks call `gtide` from PATH; make sure every git call in the tests sees the
+	// freshly built binary and not one installed on the machine.
+	os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
@@ -50,7 +54,7 @@ func runIn(t *testing.T, dir, bin string, args ...string) (string, int) {
 // runEnv is runIn with extra environment variables and optional stdin.
 func runEnv(t *testing.T, dir string, extra []string, stdin, bin string, args ...string) (string, int) {
 	t.Helper()
-	cmd := exec.Command(bin, args...)
+	cmd := exec.CommandContext(t.Context(), bin, args...)
 	cmd.Dir = dir
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -490,4 +494,151 @@ func TestPRTokenFromDotenv(t *testing.T) {
 	if code != 0 || auth != "Bearer from-dotenv" {
 		t.Fatalf("dotenv token: %d auth=%q\n%s", code, auth, out)
 	}
+}
+
+// gitlabRepo returns a clone whose origin looks like a gitlab.com project but
+// really points at a local bare repository, already initialised with provider auto.
+func gitlabRepo(t *testing.T) (dir, bare string) {
+	t.Helper()
+	dir, bare = testutil.NewRepoWithRemote(t)
+	testutil.Run(t, dir, "remote", "set-url", "origin", "git@gitlab.com:acme/group/tool.git")
+	testutil.Run(t, dir, "config", "url."+bare+".insteadOf", "git@gitlab.com:acme/group/tool.git")
+	out, code := gtide(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	for _, want := range []string{"provider: auto", "created", "secret.tide.yml", ".gitignore"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("init output lacks %q:\n%s", want, out)
+		}
+	}
+	git(t, dir, "checkout", "-q", "-b", "feature/pay")
+	testutil.WriteFile(t, dir, "pay.txt", "p\n")
+	git(t, dir, "add", "pay.txt")
+	if out, code := git(t, dir, "commit", "-q", "-m", "feat: add pay"); code != 0 {
+		t.Fatalf("commit: %s", out)
+	}
+	return dir, bare
+}
+
+func TestPRGitLabEndToEnd(t *testing.T) {
+	var got map[string]any
+	var token, path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token, path = r.Header.Get("PRIVATE-TOKEN"), r.URL.EscapedPath()
+		json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"iid":5,"web_url":"https://gitlab.com/acme/group/tool/-/merge_requests/5"}`))
+	}))
+	defer srv.Close()
+	dir, bare := gitlabRepo(t)
+	bin := filepath.Join(binDir, "gtide")
+
+	// init generated the local file, ignored by Git, referencing the GitLab variable
+	secret, err := os.ReadFile(filepath.Join(dir, "secret.tide.yml"))
+	if err != nil || !strings.Contains(string(secret), "provider_token: ${GITLAB_TOKEN}") {
+		t.Fatalf("secret.tide.yml: %v\n%s", err, secret)
+	}
+	if o, _ := git(t, dir, "status", "--porcelain", "--", "secret.tide.yml"); strings.TrimSpace(o) != "" {
+		t.Fatalf("secret.tide.yml is not ignored:\n%s", o)
+	}
+
+	apiEnv := []string{"TIDE_GITLAB_API_URL=" + srv.URL + "/api/v4", "GITLAB_TOKEN=glpat-test", "GH_TOKEN=", "GITHUB_TOKEN="}
+	noToken := []string{"TIDE_GITLAB_API_URL=" + srv.URL + "/api/v4", "GITLAB_TOKEN=", "GH_TOKEN=", "GITHUB_TOKEN="}
+
+	// no token: the message names the GitLab variable, nothing is pushed
+	out, code := runEnv(t, dir, noToken, "", bin, "pr", "--yes")
+	if code != 3 || !strings.Contains(out, "GITLAB_TOKEN") {
+		t.Fatalf("no token: %d\n%s", code, out)
+	}
+
+	out, code = runEnv(t, dir, apiEnv, "y\n", bin, "pr", "--draft")
+	if code != 0 || !strings.Contains(out, "merge_requests/5") || !strings.Contains(out, "!5") || !strings.Contains(out, "Merge request") {
+		t.Fatalf("pr: %d\n%s", code, out)
+	}
+	if token != "glpat-test" || path != "/api/v4/projects/acme%2Fgroup%2Ftool/merge_requests" {
+		t.Fatalf("request: token=%q path=%q", token, path)
+	}
+	if got["source_branch"] != "feature/pay" || got["target_branch"] != "main" || got["title"] != "Draft: feat: add pay" {
+		t.Fatalf("body: %v", got)
+	}
+	if o, _ := git(t, bare, "branch", "--list", "feature/pay"); !strings.Contains(o, "feature/pay") {
+		t.Fatal("branch not pushed")
+	}
+}
+
+func TestPRTokenFromSecretFileReference(t *testing.T) {
+	var token string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token = r.Header.Get("PRIVATE-TOKEN")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"iid":6,"web_url":"https://gitlab.com/acme/group/tool/-/merge_requests/6"}`))
+	}))
+	defer srv.Close()
+	dir, _ := gitlabRepo(t)
+	bin := filepath.Join(binDir, "gtide")
+	// explicit provider overrides detection, and the file may reference any variable
+	testutil.WriteFile(t, dir, ".tide.yml", strings.Replace(read(t, filepath.Join(dir, ".tide.yml")), "provider: auto", "provider: gitlab", 1))
+	testutil.WriteFile(t, dir, "secret.tide.yml", "provider_token: ${CORP_GITLAB_PAT}\n")
+	env := []string{"TIDE_GITLAB_API_URL=" + srv.URL + "/api/v4", "GITLAB_TOKEN=", "GH_TOKEN=", "GITHUB_TOKEN=", "CORP_GITLAB_PAT=glpat-corp"}
+	if out, code := runEnv(t, dir, env, "", bin, "pr", "--yes"); code != 0 || token != "glpat-corp" {
+		t.Fatalf("pr: %d token=%q\n%s", code, token, out)
+	}
+
+	// a literal token in the file is refused and never echoed
+	testutil.WriteFile(t, dir, "secret.tide.yml", "provider_token: glpat-literalliteral\n")
+	out, code := runEnv(t, dir, env, "", bin, "pr", "--yes")
+	if code == 0 || strings.Contains(out, "glpat-literalliteral") {
+		t.Fatalf("literal token: %d\n%s", code, out)
+	}
+}
+
+func TestSecretFilePatternsBlockCommit(t *testing.T) {
+	dir, _ := testutil.NewRepoWithRemote(t)
+	if out, code := gtide(t, dir, "init"); code != 0 {
+		t.Fatalf("init: %s", out)
+	}
+	testutil.WriteFile(t, dir, "secret.tide.yml", "secrets:\n  patterns:\n    - name: Corp Key\n      pattern: 'corp_[0-9]{6}'\n")
+	git(t, dir, "checkout", "-q", "-b", "feature/x")
+	testutil.WriteFile(t, dir, "x.txt", "key=corp_123456\n")
+	git(t, dir, "add", "x.txt")
+	out, code := git(t, dir, "commit", "-q", "-m", "feat: add x")
+	if code == 0 || !strings.Contains(out, "Corp Key") || strings.Contains(out, "corp_123456") {
+		t.Fatalf("local pattern not enforced (or the secret was printed): %d\n%s", code, out)
+	}
+	// the secret file itself is ignored, so it can never be committed by accident
+	git(t, dir, "add", "-A")
+	if o, _ := git(t, dir, "diff", "--cached", "--name-only"); strings.Contains(o, "secret.tide.yml") {
+		t.Fatalf("secret.tide.yml got staged:\n%s", o)
+	}
+}
+
+func TestInitIsIdempotentAndHonoursProvider(t *testing.T) {
+	dir, _ := testutil.NewRepoWithRemote(t)
+	if out, code := gtide(t, dir, "init", "--provider", "gitlab", "--no-hooks"); code != 0 || !strings.Contains(out, "provider: gitlab") {
+		t.Fatalf("init: %d\n%s", code, out)
+	}
+	before := read(t, filepath.Join(dir, ".gitignore"))
+	out, code := gtide(t, dir, "init", "--no-hooks")
+	if code != 0 || strings.Count(out, "preserved") != 3 {
+		t.Fatalf("second init: %d\n%s", code, out)
+	}
+	if read(t, filepath.Join(dir, ".gitignore")) != before || strings.Count(before, "secret.tide.yml") != 1 {
+		t.Fatalf(".gitignore changed or duplicated:\n%q", before)
+	}
+	if out, code := gtide(t, dir, "init", "--provider", "bitbucket"); code != 2 {
+		t.Fatalf("bad provider: %d\n%s", code, out)
+	}
+	if out, code := gtide(t, dir, "config"); code != 0 || !strings.Contains(out, "provider: gitlab") {
+		t.Fatalf("config: %d\n%s", code, out)
+	}
+}
+
+func read(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

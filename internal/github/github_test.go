@@ -13,12 +13,12 @@ import (
 
 func TestParseRemoteURL(t *testing.T) {
 	good := map[string]Repo{
-		"https://github.com/acme/tool.git":            {"acme", "tool"},
-		"https://github.com/acme/tool":                {"acme", "tool"},
-		"https://user:tok@github.com/acme/tool.git":   {"acme", "tool"},
-		"git@github.com:acme/tool.git":                {"acme", "tool"},
-		"ssh://git@github.com/acme/tool.git":          {"acme", "tool"},
-		"https://GitHub.com/acme/my.repo-name_1.git/": {"acme", "my.repo-name_1"},
+		"https://github.com/acme/tool.git":            {Owner: "acme", Name: "tool"},
+		"https://github.com/acme/tool":                {Owner: "acme", Name: "tool"},
+		"https://user:tok@github.com/acme/tool.git":   {Owner: "acme", Name: "tool"},
+		"git@github.com:acme/tool.git":                {Owner: "acme", Name: "tool"},
+		"ssh://git@github.com/acme/tool.git":          {Owner: "acme", Name: "tool"},
+		"https://GitHub.com/acme/my.repo-name_1.git/": {Owner: "acme", Name: "my.repo-name_1"},
 	}
 	for in, want := range good {
 		got, err := ParseRemoteURL(in)
@@ -41,8 +41,8 @@ func TestParsePRRef(t *testing.T) {
 		"12":                                  {Number: 12},
 		"#12":                                 {Number: 12},
 		" 7 ":                                 {Number: 7},
-		"https://github.com/a/b/pull/5":       {Number: 5, Repo: &Repo{"a", "b"}},
-		"https://github.com/a/b/pull/5/files": {Number: 5, Repo: &Repo{"a", "b"}},
+		"https://github.com/a/b/pull/5":       {Number: 5, Repo: &Repo{Owner: "a", Name: "b"}},
+		"https://github.com/a/b/pull/5/files": {Number: 5, Repo: &Repo{Owner: "a", Name: "b"}},
 	}
 	for in, want := range ok {
 		got, err := ParsePRRef(in)
@@ -79,7 +79,7 @@ func TestGetPullRequest(t *testing.T) {
 	defer srv.Close()
 
 	c := &Client{BaseURL: srv.URL, Token: "secret-token", HTTP: srv.Client()}
-	repo := Repo{"acme", "tool"}
+	repo := Repo{Owner: "acme", Name: "tool"}
 	ctx := context.Background()
 
 	pr, err := c.GetPullRequest(ctx, repo, 1)
@@ -140,7 +140,7 @@ func TestCreatePullRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{BaseURL: srv.URL, Token: "tok", HTTP: srv.Client()}
-	repo := Repo{"acme", "tool"}
+	repo := Repo{Owner: "acme", Name: "tool"}
 
 	pr, err := c.CreatePullRequest(context.Background(), repo, NewPullRequest{Title: "T", Body: "B", Head: "feature/x", Base: "main", Draft: true})
 	if err != nil {
@@ -161,7 +161,7 @@ func TestCreatePullRequest(t *testing.T) {
 	if !errors.As(err, &verr) || !strings.Contains(verr.Message, "already exists") {
 		t.Errorf("err = %v", err)
 	}
-	if _, err := c.CreatePullRequest(context.Background(), Repo{"x", "y"}, NewPullRequest{}); !errors.Is(err, ErrNotFound) {
+	if _, err := c.CreatePullRequest(context.Background(), Repo{Owner: "x", Name: "y"}, NewPullRequest{}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -188,7 +188,7 @@ func TestListProtectedBranchesPaginates(t *testing.T) {
 	defer srv.Close()
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
 
-	prot, truncated, err := c.ListProtectedBranches(context.Background(), Repo{"acme", "tool"})
+	prot, truncated, err := c.ListProtectedBranches(context.Background(), Repo{Owner: "acme", Name: "tool"})
 	if err != nil || truncated {
 		t.Fatalf("err=%v truncated=%v", err, truncated)
 	}
@@ -207,7 +207,7 @@ func TestListProtectedBranchesTruncates(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
-	prot, truncated, err := c.ListProtectedBranches(context.Background(), Repo{"a", "b"})
+	prot, truncated, err := c.ListProtectedBranches(context.Background(), Repo{Owner: "a", Name: "b"})
 	if err != nil || !truncated || len(prot) != maxPages*pageSize {
 		t.Fatalf("err=%v truncated=%v len=%d", err, truncated, len(prot))
 	}
@@ -223,7 +223,7 @@ func TestListOpenPullRequests(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
-	prs, truncated, err := c.ListOpenPullRequests(context.Background(), Repo{"acme", "tool"})
+	prs, truncated, err := c.ListOpenPullRequests(context.Background(), Repo{Owner: "acme", Name: "tool"})
 	if err != nil || truncated || gotQuery != "open" {
 		t.Fatalf("err=%v truncated=%v state=%q", err, truncated, gotQuery)
 	}
@@ -236,10 +236,10 @@ func TestListErrorsPropagate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }))
 	defer srv.Close()
 	c := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
-	if _, _, err := c.ListProtectedBranches(context.Background(), Repo{"a", "b"}); !errors.Is(err, ErrNotFound) {
+	if _, _, err := c.ListProtectedBranches(context.Background(), Repo{Owner: "a", Name: "b"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v", err)
 	}
-	if _, _, err := c.ListOpenPullRequests(context.Background(), Repo{"a", "b"}); !errors.Is(err, ErrNotFound) {
+	if _, _, err := c.ListOpenPullRequests(context.Background(), Repo{Owner: "a", Name: "b"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v", err)
 	}
 }

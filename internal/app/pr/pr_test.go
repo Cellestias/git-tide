@@ -13,14 +13,16 @@ import (
 	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/github"
 	"github.com/cellestias/git-tide/internal/output"
+	"github.com/cellestias/git-tide/internal/provider"
 	"github.com/cellestias/git-tide/internal/testutil"
 )
 
 type fakeCreator struct {
-	got   github.NewPullRequest
-	repo  github.Repo
-	calls int
-	err   error
+	*github.Client // supplies the parsing half of provider.Provider
+	got            github.NewPullRequest
+	repo           github.Repo
+	calls          int
+	err            error
 }
 
 func (f *fakeCreator) CreatePullRequest(_ context.Context, r github.Repo, n github.NewPullRequest) (github.PullRequest, error) {
@@ -45,7 +47,7 @@ func setup(t *testing.T) (*repository.Repository, string, string) {
 	return repository.New(executor.Exec{}, dir), dir, bare
 }
 
-func run(repo *repository.Repository, c Creator, opts Options) (string, string, error) {
+func run(repo *repository.Repository, c provider.Provider, opts Options) (string, string, error) {
 	var out, errOut bytes.Buffer
 	err := Run(context.Background(), repo, domain.Default(), c, opts, output.Printer{Out: &out, Err: &errOut})
 	return out.String(), errOut.String(), err

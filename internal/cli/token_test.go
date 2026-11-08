@@ -18,7 +18,7 @@ func lookup(t *testing.T, dir string) (token, warnings string) {
 	t.Helper()
 	var errOut bytes.Buffer
 	repo := repository.New(executor.Exec{}, dir)
-	token = dotenvToken(context.Background(), repo, output.Printer{Out: &bytes.Buffer{}, Err: &errOut})
+	token = dotenvToken(context.Background(), repo, output.Printer{Out: &bytes.Buffer{}, Err: &errOut}, "GITHUB_TOKEN", "GH_TOKEN")
 	return token, errOut.String()
 }
 

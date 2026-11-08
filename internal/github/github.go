@@ -16,18 +16,24 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cellestias/git-tide/internal/provider"
 )
 
 // DefaultAPIURL is the public GitHub REST API root.
 const DefaultAPIURL = "https://api.github.com"
 
-// Repo identifies a GitHub repository.
-type Repo struct {
-	Owner string
-	Name  string
-}
+// Provider-neutral types shared with every adapter.
+type (
+	Repo           = provider.Repo
+	PullRequest    = provider.PullRequest
+	NewPullRequest = provider.NewPullRequest
+	PRRef          = provider.Ref
+	ErrValidation  = provider.ErrValidation
+)
 
-func (r Repo) String() string { return r.Owner + "/" + r.Name }
+// ErrNotFound means the PR or repository does not exist or is not accessible.
+var ErrNotFound = provider.ErrNotFound
 
 var (
 	scpLike  = regexp.MustCompile(`^[A-Za-z0-9._-]+@github\.com:([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?/?$`)
@@ -61,12 +67,6 @@ func ParseRemoteURL(raw string) (Repo, error) {
 
 var prURL = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)/pull/(\d+)(?:[/?#].*)?$`)
 
-// PRRef is a parsed Pull Request identifier. Repo is nil for bare numbers.
-type PRRef struct {
-	Number int
-	Repo   *Repo
-}
-
 // ParsePRRef accepts "123", "#123", or a full pull request URL.
 func ParsePRRef(s string) (PRRef, error) {
 	s = strings.TrimSpace(s)
@@ -83,21 +83,6 @@ func ParsePRRef(s string) (PRRef, error) {
 	}
 	return PRRef{Number: n}, nil
 }
-
-// PullRequest is the subset of PR metadata Tide displays.
-type PullRequest struct {
-	Number   int
-	Title    string
-	State    string
-	URL      string
-	Author   string
-	HeadRef  string
-	BaseRef  string
-	HeadRepo string // full name of the head repository; empty if it was deleted
-}
-
-// ErrNotFound means the PR or repository does not exist or is not accessible.
-var ErrNotFound = errors.New("pull request not found or not accessible")
 
 // Client is a minimal GitHub REST client.
 type Client struct {
@@ -124,6 +109,21 @@ func NewClient() (*Client, error) {
 	return &Client{BaseURL: strings.TrimRight(base, "/"), Token: token, HTTP: &http.Client{Timeout: 30 * time.Second}}, nil
 }
 
+// Provider methods: *Client satisfies provider.Provider.
+
+func (c *Client) Name() string     { return provider.GitHub }
+func (c *Client) Noun() string     { return "pull request" }
+func (c *Client) TokenEnv() string { return "GITHUB_TOKEN" }
+func (c *Client) HasToken() bool   { return c != nil && c.Token != "" }
+
+func (c *Client) ParseRemoteURL(raw string) (Repo, error) { return ParseRemoteURL(raw) }
+func (c *Client) ParseRef(s string) (PRRef, error)        { return ParsePRRef(s) }
+
+// ReviewRefspec fetches refs/pull/<n>/head, which also exists for fork PRs.
+func (c *Client) ReviewRefspec(number int, dst string) string {
+	return fmt.Sprintf("+refs/pull/%d/head:%s", number, dst)
+}
+
 func checkBaseURL(base string) error {
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" {
@@ -144,22 +144,6 @@ func (c *Client) GetPullRequest(ctx context.Context, repo Repo, number int) (Pul
 	}
 	return decodePullRequest(body)
 }
-
-// NewPullRequest describes a pull request to create.
-type NewPullRequest struct {
-	Title string
-	Body  string
-	Head  string // branch in the same repository
-	Base  string
-	Draft bool
-}
-
-// ErrValidation means GitHub rejected the request (HTTP 422), for example
-// because a pull request for the branch already exists. The message comes from
-// GitHub and is safe to show.
-type ErrValidation struct{ Message string }
-
-func (e *ErrValidation) Error() string { return "GitHub rejected the pull request: " + e.Message }
 
 // CreatePullRequest opens a pull request and returns it, including its URL.
 func (c *Client) CreatePullRequest(ctx context.Context, repo Repo, npr NewPullRequest) (PullRequest, error) {
@@ -362,38 +346,6 @@ func (c *Client) eachPage(ctx context.Context, endpoint string, handle func(json
 		}
 	}
 	return true, nil
-}
-
-// remoteReader is the part of the repository service RepoFromRemote needs.
-type remoteReader interface {
-	RemoteURL(ctx context.Context, remote string) (string, error)
-	RemoteConfiguredURL(ctx context.Context, remote string) (string, error)
-}
-
-// Errors returned by RepoFromRemote.
-var (
-	ErrNoRemote          = errors.New("remote is not configured")
-	ErrUnsupportedRemote = errors.New("remote is not a supported GitHub remote")
-)
-
-// RepoFromRemote identifies the GitHub repository behind a Git remote. Git
-// may rewrite the URL through url.<base>.insteadOf into something that is not
-// GitHub-shaped, so the URL as written is tried as a fallback.
-func RepoFromRemote(ctx context.Context, r remoteReader, remote string) (Repo, error) {
-	resolved, err := r.RemoteURL(ctx, remote)
-	if err != nil {
-		return Repo{}, fmt.Errorf("%w: %q", ErrNoRemote, remote)
-	}
-	repo, perr := ParseRemoteURL(resolved)
-	if perr == nil {
-		return repo, nil
-	}
-	if raw, err := r.RemoteConfiguredURL(ctx, remote); err == nil {
-		if repo, err := ParseRemoteURL(raw); err == nil {
-			return repo, nil
-		}
-	}
-	return Repo{}, fmt.Errorf("%w: %w", ErrUnsupportedRemote, perr)
 }
 
 // redactURLErr drops the URL from *url.Error so it cannot leak into output.
