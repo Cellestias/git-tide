@@ -30,6 +30,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	binDir = dir
+	// Hooks call `gtide` from PATH; make sure every git call in the tests sees the
+	// freshly built binary and not one installed on the machine.
+	os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
