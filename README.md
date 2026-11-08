@@ -5,11 +5,11 @@
 Git Tide (`gtide`) is a command-line tool that sits on top of Git and makes everyday workflows safer and more consistent for a team:
 
 - **Update** a working branch from its base branch in one command, without risking uncommitted work.
-- **Review** a GitHub Pull Request on a predictable local branch.
+- **Review** a GitHub Pull Request or GitLab Merge Request on a predictable local branch.
 - **See** your branches at a glance: base, upstream, staleness, protection, open PRs.
 - **Switch** branches without losing work, with partial names and `-` for the previous branch.
 - **Start** new branches from a fresh base.
-- **Open** a Pull Request from your current branch.
+- **Open** a Pull Request (GitHub) or Merge Request (GitLab) from your current branch, with the same commands on both and no `gh` or `glab` to install.
 - **Guard** your repository with local hooks: Conventional Commits, secret scanning, and protected branches.
 
 Git stays the source of truth. Tide runs the Git you already have, needs no server or database, and keeps working alongside plain `git` commands.
@@ -152,14 +152,17 @@ Run `gtide <command> --help` for the built-in help.
 
 ### `gtide init`
 
-Creates `.tide.yml` and installs the Git hooks.
+Creates `.tide.yml` (shared settings), `secret.tide.yml` (local credentials reference and secret patterns), adds `secret.tide.yml` to `.gitignore`, and installs the Git hooks.
 
 ```bash
-gtide init [--base <branch>] [--no-hooks]
+gtide init [--provider auto|github|gitlab] [--base <branch>] [--no-hooks]
 ```
 
+- `--provider` sets `provider:` in the new `.tide.yml`. The default is `auto`, which detects GitHub or GitLab from the remote URL (see [Providers](#providers)).
 - The default base branch is detected from `origin/HEAD`, then `main`, then `master`. Override it with `--base`.
-- An existing `.tide.yml` is **never overwritten**.
+- An existing `.tide.yml` or `secret.tide.yml` is **never overwritten**. `secret.tide.yml` is created with owner-only permissions and references `${GITHUB_TOKEN}` or `${GITLAB_TOKEN}` (from `--provider`, or from the remote when `auto`).
+- `.gitignore` is created if missing, otherwise `secret.tide.yml` is appended to it. Existing entries are kept and the rule is never duplicated.
+- `init` reports, for each file, whether it was created, updated, or preserved.
 - An existing Git hook is **preserved**: it is renamed to `<hook>.pre-tide` and still runs after Tide's checks pass. Tide refuses to proceed if a `.pre-tide` file already exists.
 - Re-running `init` is safe; hooks that are already current are left alone.
 - `--no-hooks` (or `hooks.manage: false`) skips hook installation.
@@ -187,7 +190,7 @@ Lists branches with Tide's view of them. Alias: `gtide branches`.
 
 ```bash
 gtide branch                        # local data only, works offline
-gtide branch --remote --github      # + remote-only branches, GitHub protection and open PRs
+gtide branch --remote --hosted      # + remote-only branches, GitHub protection and open PRs
 gtide branch --mine --sort name
 gtide branch --merged               # candidates for cleanup
 gtide branch --stale 30             # no commits for more than 30 days
@@ -208,12 +211,12 @@ BRANCH         UPDATED       LAST AUTHOR  UPSTREAM  BASE     STATUS
 | `UPSTREAM` | Ahead (`↑`) and behind (`↓`) against the upstream, `in sync`, `none` when the branch has no upstream, or `gone` when the upstream was deleted on the remote. |
 | `BASE` | The base branch from `.tide.yml` with ahead/behind against it. `-` for the base itself or when it cannot be found. |
 | `STATUS` | `protected` (in `.tide.yml`), `merged` (nothing the base lacks, and the base has moved on), `remote-only`. |
-| `GITHUB` | Only with `--github`: `protected` on GitHub and the open Pull Request (`PR #12`) for the branch. Pull requests from forks are not matched. |
+| `GITHUB` / `GITLAB` | Only with `--hosted`: `protected` on the provider and the open Pull Request (`PR #12`) or Merge Request (`MR !12`) for the branch. Requests from forks are not matched. |
 
 | Flag | Effect |
 |---|---|
-| `--remote` | Fetches the remote (`git fetch --prune`) and also lists branches that exist only there. This is the only network call besides `--github`. |
-| `--github` | Adds the `GITHUB` column through the API. Public repositories work without a token; for private ones set `GITHUB_TOKEN`. If the API cannot be read, the column shows `?` and a warning is printed; the command still succeeds. |
+| `--remote` | Fetches the remote (`git fetch --prune`) and also lists branches that exist only there. This is the only network call besides `--hosted`. |
+| `--hosted` | Adds the `GITHUB` or `GITLAB` column through the provider API (`--github` still works as an alias). Public repositories work without a token; for private ones set the provider token. If the API cannot be read, the column shows `?` and a warning is printed; the command still succeeds. |
 | `--mine` | Only branches whose last author is your `git config user.email`. |
 | `--stale <days>` | Only branches with no commits for more than that many days. |
 | `--merged` | Only branches that are fully merged into their base. |
@@ -289,7 +292,7 @@ gtide abort             # or: give up and go back to before it; asks [y/N], --ye
 
 ### `gtide review <PR>`
 
-Checks out a GitHub Pull Request on a local review branch named `tide/review/pr-<number>`.
+Checks out a GitHub Pull Request or GitLab Merge Request on a local review branch named `tide/review/pr-<number>`.
 
 ```bash
 gtide review 123
@@ -302,7 +305,7 @@ gtide review https://github.com/acme/tool/pull/123
 - If the review branch has local commits that are not in the PR, Tide refuses. Re-run with `--reset` to discard them.
 - Prints title, author, state, source and target branches, and a suggested `git diff` command.
 - Requires a clean tracked working tree. A full PR URL must point to the configured remote's repository.
-- Reads PR metadata from the GitHub API. Public repositories work without a token; private ones need `GITHUB_TOKEN`.
+- Reads the metadata from the provider API. Public repositories work without a token; private ones need the provider token. On GitLab, `<PR>` can also be `!123` or a `.../-/merge_requests/123` URL, and the head is fetched from `refs/merge-requests/<n>/head`.
 
 Return to your previous branch with `git switch <branch>`.
 
@@ -346,10 +349,10 @@ Refuses on a detached HEAD and on protected branches (`branches.protected`). Unc
 
 ### `gtide pr`
 
-Pushes the current branch and opens a GitHub Pull Request.
+Pushes the current branch and opens a Pull Request (GitHub) or Merge Request (GitLab). The command is the same on both; Tide translates it for the provider.
 
 ```bash
-export GITHUB_TOKEN=...          # needs pull-request write access
+export GITHUB_TOKEN=...          # or GITLAB_TOKEN; needs pull/merge request write access
 gtide pr                          # shows a summary, asks [y/N]
 gtide pr --draft --yes
 gtide pr --base main --title "Add login" --body "Closes #12"
@@ -363,7 +366,7 @@ Flow:
 4. Asks for confirmation (skip with `--yes`). Declining pushes nothing and creates nothing (only the base branch is fetched).
 5. Pushes the branch (your `pre-push` hook still applies) and creates the PR.
 
-Defaults: the title is the commit subject when the branch has exactly one commit, otherwise the humanised branch name (`feature/login-page` becomes "Login page"). The body lists the commit subjects. If GitHub rejects the request after the push (for example, a PR already exists), the branch stays pushed and the error says so.
+Defaults: the title is the commit subject when the branch has exactly one commit, otherwise the humanised branch name (`feature/login-page` becomes "Login page"). The body lists the commit subjects. If the provider rejects the request after the push (for example, a request already exists for the branch), the branch stays pushed and the error says so.
 
 ### `gtide doctor`
 
@@ -378,10 +381,11 @@ gtide config validate   # validate .tide.yml and report every problem with its f
 
 ## Configuration
 
-Tide reads `.tide.yml` from the repository root. Omitted keys use the defaults below; unknown keys are rejected so typos do not pass silently.
+Tide reads `.tide.yml` (shared, committed) and `secret.tide.yml` (local, git-ignored; see [Authentication](#authentication)) from the repository root. Omitted keys use the defaults below; unknown keys are rejected so typos do not pass silently.
 
 ```yaml
 version: 1
+provider: auto # auto, github or gitlab
 remote: origin
 
 branches:
@@ -414,6 +418,7 @@ hooks:
 | Key | Default | Meaning |
 |---|---|---|
 | `version` | `1` | Schema version. Only `1` is supported. |
+| `provider` | `auto` | Hosting provider: `auto` detects it from the remote URL, or force `github` / `gitlab`. |
 | `remote` | `origin` | Remote used by `update`, `review`, and `pr`. |
 | `branches.default_base` | `main` | Base for branches that match no pattern in `branches.base`. |
 | `branches.protected` | `[main]` | Branches where local hooks reject direct commits and pushes. |
@@ -422,8 +427,26 @@ hooks:
 | `commits.convention` | `conventional` | The only supported convention. |
 | `commits.require_scope` | `false` | Require `type(scope):` instead of `type:`. |
 | `secrets.enabled` | `true` | Scan staged changes for likely secrets. |
-| `secrets.custom_patterns` | none | Extra detectors: `name` (lowercase, digits, `_`, `-`) and `pattern` (Go regular expression). At most 100. |
+| `secrets.custom_patterns` | none | Extra detectors committed with the project: `name` (letters, digits, spaces, `.`, `_`, `-`) and `pattern` (Go regular expression). At most 100. Prefer `secrets.patterns` in `secret.tide.yml`, which is not committed. |
 | `hooks.manage` | `true` | Whether `gtide init` installs hooks. |
+
+### Providers
+
+Tide talks to GitHub and GitLab through the same commands (`pr`, `review`, `branch --hosted`). `provider` in `.tide.yml` selects the adapter:
+
+| Value | Behaviour |
+|---|---|
+| `auto` | Detects the provider from the `remote` URL: `github.com` is GitHub; `gitlab.com` and hosts starting with `gitlab.` are GitLab. HTTPS, `ssh://` and `git@host:path` URLs all work. If the host is not recognised the command stops and asks you to set `provider`. |
+| `github` | Always GitHub. |
+| `gitlab` | Always GitLab, on any host. Use it for self-hosted GitLab whose hostname does not start with `gitlab.`. Nested groups (`group/sub/project`) are supported. |
+
+| Tide | GitHub | GitLab |
+|---|---|---|
+| `gtide pr` | Create Pull Request | Create Merge Request (`--draft` adds the `Draft:` title prefix) |
+| `gtide review <n>` | View Pull Request, fetch `refs/pull/<n>/head` | View Merge Request, fetch `refs/merge-requests/<n>/head` |
+| `gtide branch --hosted` | List protected branches and open Pull Requests | List protected branches and open Merge Requests |
+
+Tide calls the REST APIs itself: you do not need `gh` or `glab`. A new provider is one more adapter behind the same interface; no command changes.
 
 ### Choosing a base branch
 
@@ -442,28 +465,46 @@ For a one-off exception, pass the base explicitly: `gtide update main` or `gtide
 
 ## Authentication
 
-`gtide pr` needs a GitHub token with pull-request write access (a fine-grained token with "Pull requests: Read and write" and "Contents: Read" on the repository, or a classic token with the `repo` scope). `gtide review` and `gtide branch --github` only need one for private repositories. Pushing uses Git's own authentication, not this token.
+`gtide pr` needs a token with write access to pull / merge requests; `gtide review` and `gtide branch --hosted` only need one for private repositories. Pushing uses Git's own authentication, not this token.
 
-Tide looks for the token in this order and uses the first it finds:
+- **GitHub**: a fine-grained token with "Pull requests: Read and write" and "Contents: Read" on the repository, or a classic token with the `repo` scope.
+- **GitLab**: a personal, project or group access token with the `api` scope (role Developer or higher).
 
-1. The `GITHUB_TOKEN` environment variable.
-2. The `GH_TOKEN` environment variable.
-3. A `GITHUB_TOKEN=` or `GH_TOKEN=` line in the **`.env` file at the repository root**.
+### `secret.tide.yml`
 
-Because the `.env` is per repository, each project can use the token of its own organisation:
+`gtide init` creates this local file next to `.tide.yml` and adds it to `.gitignore`. It is never committed and never overwritten.
 
-```bash
-# <repo>/.env
-GITHUB_TOKEN=ghp_xxx
+```yaml
+provider_token: ${GITLAB_TOKEN}   # or ${GITHUB_TOKEN}
+
+secrets:
+  patterns:
+    - name: AWS Access Key
+      pattern: 'AKIA[0-9A-Z]{16}'
 ```
 
+- `provider_token` must be a `${VARIABLE_NAME}` reference. A literal token is rejected (and never echoed). Tide resolves the variable at run time from the environment and, if it is empty there, from the same key in `.env`.
+- `secrets.patterns` adds secret-scanning detectors on top of the built-in ones, with the same rules as `secrets.custom_patterns`. They are local, so a team can keep internal patterns out of the repository.
+- `gtide doctor` warns when the file is missing, not ignored, or tracked by Git, and when the referenced variable is not set. `gtide config` never prints these patterns or the token.
+
+### Where the token comes from
+
+Tide uses the first it finds:
+
+1. The variable referenced by `provider_token` in `secret.tide.yml` (environment, then `.env`).
+2. The provider's usual variable: `GITHUB_TOKEN`, then `GH_TOKEN` for GitHub; `GITLAB_TOKEN` for GitLab.
+3. The same keys in the **`.env` file at the repository root**.
+
+Because both files are per repository, each project can use the token of its own organisation:
+
 ```bash
-echo ".env" >> .gitignore   # keep it out of Git
+# <repo>/.env  (git-ignored)
+GITLAB_TOKEN=glpat-xxx
 ```
 
-Only those two keys are read from `.env`; the rest of the file is ignored and nothing is exported to other processes. Quotes, `export` and `#` comments are understood; `$VARIABLE` is not expanded. The file must be a regular file of at most 64 KB.
+Only the keys above are read from `.env`; the rest of the file is ignored and nothing is exported to other processes. Quotes, `export` and `#` comments are understood; `$VARIABLE` is not expanded. The file must be a regular file of at most 64 KB.
 
-If `.env` is **tracked by Git**, Tide refuses to use it, since the token is already exposed: revoke it and run `git rm --cached .env`. If `.env` is not covered by `.gitignore`, Tide uses it but warns, because a careless `git add` (including `gtide save` without `-f`) would commit it. A token is never written to the output or to error messages. You can also use your `gh` login: `export GITHUB_TOKEN=$(gh auth token)`.
+If `.env` is **tracked by Git**, Tide refuses to use it, since the token is already exposed: revoke it and run `git rm --cached .env`. If `.env` is not covered by `.gitignore`, Tide uses it but warns, because a careless `git add` (including `gtide save` without `-f`) would commit it. A token is never written to the output or to error messages. You can also reuse your CLI login: `export GITHUB_TOKEN=$(gh auth token)` or `export GITLAB_TOKEN=$(glab auth token)`.
 
 ## What the hooks do
 
@@ -477,7 +518,7 @@ If `.env` is **tracked by Git**, Tide refuses to use it, since the token is alre
 
 **Commit messages** must look like `type(scope)!: description`, where the scope and `!` are optional. Accepted types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`. Messages Git generates itself (`Merge ...`, `Revert "..."`, `fixup!`, `squash!`, `amend!`) are accepted. A rejection explains why and shows a valid example.
 
-**Secret scanning** inspects only the lines you add. Built-in detectors cover AWS access key IDs, GitHub tokens, Slack tokens, Stripe live keys, Google API keys, and private key headers; add your own with `secrets.custom_patterns`. Findings show the file, line, and rule name, never the matched value. For a false positive, put `tide:allow-secret` on that line.
+**Secret scanning** inspects only the lines you add. Built-in detectors cover AWS access key IDs, GitHub tokens, Slack tokens, Stripe live keys, Google API keys, and private key headers; add your own with `secrets.patterns` in `secret.tide.yml` (or `secrets.custom_patterns` in `.tide.yml`). Findings show the file, line, and rule name, never the matched value. For a false positive, put `tide:allow-secret` on that line.
 
 **Conflict markers**: added lines that start with `<<<<<<<` or `>>>>>>>` (what Git writes into a file on a conflict) block the commit, so an unresolved conflict cannot slip into history. This check is always on, also when `secrets.enabled` is false. `=======` alone is not flagged, since it is a common heading underline. For content that really contains a marker, put `tide:allow-conflict-marker` on that line. `gtide commit` and `gtide save` apply the same check.
 
@@ -494,9 +535,9 @@ To remove Tide's hooks, delete the three files in the hooks directory (`git rev-
 | `0` | Success. |
 | `1` | General failure, including merge/rebase conflicts in `gtide update` and problems found by `gtide doctor`. |
 | `2` | Invalid command usage or arguments. |
-| `3` | Configuration invalid, or missing where required (including a missing `GITHUB_TOKEN` for `gtide pr`). |
+| `3` | Configuration invalid, or missing where required (including a missing provider token for `gtide pr`). |
 | `4` | A policy rejected the operation (protected branch, commit message, secret). |
-| `5` | External failure: Git, the network, or the GitHub API. |
+| `5` | External failure: Git, the network, or the provider API. |
 | `6` | Unsafe repository state; nothing was changed. |
 
 Note that when a hook rejects a command, Git itself reports a failure; the Tide exit code applies when you run `gtide` directly.
@@ -506,10 +547,10 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 - **Local guardrails, not enforcement.** Anyone can bypass hooks with `--no-verify` or edit their local setup. Keep branch protection enabled on GitHub; it is the authoritative control.
 - **Secret scanning is best-effort.** It reduces accidents; it does not guarantee that every secret is caught. If a secret does reach a commit, rotate it.
 - **Secrets stay out of output.** Tide never prints matched values, tokens, or credentials embedded in remote URLs.
-- **Tokens.** Tide reads `GITHUB_TOKEN` (or `GH_TOKEN`) from the environment, or from `.env` at the repository root (see [Authentication](#authentication)), and never stores it. Do not put tokens in `.tide.yml`.
+- **Tokens.** Tide reads the provider token from the environment or `.env` (see [Authentication](#authentication)) and never stores it. `secret.tide.yml` only references a variable, and a literal token there is rejected. Do not put tokens in `.tide.yml`.
 - **Repository configuration is untrusted input.** Tide bounds file size and pattern count, uses Go's RE2 regular expressions (no catastrophic backtracking), and validates branch names before passing them to Git. Git is always run with an argument list, never through a shell.
-- **No hidden network calls.** Only `branch` (`--remote` fetches, `--github` calls the API), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API) touch the network, and each says so as it runs.
-- **GitHub only.** `review` and `pr` support `github.com` remotes. `TIDE_GITHUB_API_URL` can point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing.
+- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API) touch the network, and each says so as it runs.
+- **GitHub and GitLab.** `review`, `pr` and `branch --hosted` support `github.com` and GitLab (gitlab.com or self-hosted). `TIDE_GITHUB_API_URL` and `TIDE_GITLAB_API_URL` point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing. GitHub Enterprise is not supported yet.
 - No telemetry.
 
 ## Troubleshooting
@@ -529,11 +570,11 @@ The local base branch has commits the remote does not, or is checked out in anot
 **A commit is rejected for a secret that is not a secret.**
 Add `tide:allow-secret` to that line, or narrow your custom pattern.
 
-**`gtide pr`: "GITHUB_TOKEN is not set".**
-Export a token with pull-request write access, or put it in `.env` at the repository root (see [Authentication](#authentication)). If a warning says `.env` is tracked by Git, Tide ignored it on purpose. `gtide review` works without a token only for public repositories.
+**`gtide pr`: "GITHUB_TOKEN is not set"** (or `GITLAB_TOKEN`).
+Export a token with pull/merge request write access, or put it in `.env` at the repository root (see [Authentication](#authentication)). If a warning says `.env` is tracked by Git, Tide ignored it on purpose. `gtide review` works without a token only for public repositories.
 
-**`gtide review` or `gtide pr`: "not a supported GitHub remote".**
-The configured `remote` must be a `github.com` URL (HTTPS, `ssh://`, or `git@github.com:owner/repo.git`). Change `remote` in `.tide.yml` if your GitHub remote is not `origin`.
+**`gtide review` or `gtide pr`: "cannot detect the provider" or "not a supported ... remote".**
+With `provider: auto` the remote must be on `github.com`, `gitlab.com`, or a host starting with `gitlab.`. For anything else (self-hosted GitLab) set `provider: gitlab` in `.tide.yml`. Also check that `remote` in `.tide.yml` is the remote that holds your project.
 
 ## Development
 
