@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cellestias/git-tide/internal/testutil"
@@ -641,4 +642,104 @@ func read(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+func TestPRWorkflowGitLabEndToEnd(t *testing.T) {
+	var mu sync.Mutex
+	queries := map[string]string{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.EscapedPath()
+		mu.Lock()
+		queries[strings.TrimPrefix(path, "/api/v4/projects/acme%2Fgroup%2Ftool")] = r.URL.RawQuery
+		mu.Unlock()
+		const mr = `{"iid":5,"title":"Add pay\u001b[31m","description":"Pays things","state":"opened","draft":false,"web_url":"https://gitlab.com/acme/group/tool/-/merge_requests/5",
+			"source_branch":"feature/pay","target_branch":"main","source_project_id":1,"target_project_id":1,"author":{"username":"ana"},
+			"assignees":[{"username":"bia"}],"reviewers":[{"username":"caio"}],"created_at":"2026-11-01T10:00:00Z","updated_at":"2026-11-02T10:00:00Z"}`
+		switch strings.TrimPrefix(path, "/api/v4") {
+		case "/user":
+			w.Write([]byte(`{"username":"ana"}`))
+		case "/projects/acme%2Fgroup%2Ftool/merge_requests":
+			w.Write([]byte("[" + mr + "]"))
+		case "/projects/acme%2Fgroup%2Ftool/merge_requests/5":
+			w.Write([]byte(mr))
+		case "/projects/acme%2Fgroup%2Ftool/merge_requests/5/diffs":
+			w.Write([]byte(`[{"old_path":"pay.txt","new_path":"pay.txt","new_file":true}]`))
+		case "/projects/acme%2Fgroup%2Ftool/merge_requests/5/commits":
+			w.Write([]byte(`[{"id":"abcdef1234567","title":"feat: add pay"}]`))
+		case "/projects/acme%2Fgroup%2Ftool/merge_requests/5/approvals":
+			w.Write([]byte(`{"approved_by":[{"user":{"username":"dani"}}],"approvals_left":0}`))
+		default:
+			t.Errorf("unexpected request %s", path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	dir, _ := gitlabRepo(t)
+	bin := filepath.Join(binDir, "gtide")
+	env := []string{"TIDE_GITLAB_API_URL=" + srv.URL + "/api/v4", "GITLAB_TOKEN=glpat-test", "GH_TOKEN=", "GITHUB_TOKEN="}
+	// the merge request's head as GitLab publishes it
+	git(t, dir, "push", "-q", "origin", "feature/pay:refs/merge-requests/5/head")
+
+	out, code := runEnv(t, dir, env, "", bin, "pr", "list", "--state", "all", "--author", "me", "--limit", "5")
+	if code != 0 || !strings.Contains(out, "!5") || !strings.Contains(out, "ana") || !strings.Contains(out, "feature/pay") {
+		t.Fatalf("pr list: %d\n%s", code, out)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Fatalf("control characters in list output:\n%q", out)
+	}
+	mu.Lock()
+	q := queries["/merge_requests"]
+	mu.Unlock()
+	if !strings.Contains(q, "author_username=ana") || !strings.Contains(q, "state=all") {
+		t.Fatalf("list query = %q", q)
+	}
+
+	out, code = runEnv(t, dir, env, "", bin, "pr", "view", "5")
+	for _, want := range []string{"!5 Add pay", "Pays things", "feature/pay → main", "bia", "approved by dani", "waiting on caio", "A  pay.txt", "abcdef1  feat: add pay"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Fatalf("pr view lacks %q (exit %d):\n%s", want, code, out)
+		}
+	}
+
+	out, code = runEnv(t, dir, env, "", bin, "pr", "status")
+	if code != 0 || !strings.Contains(out, "!5") || !strings.Contains(out, "approved by dani") {
+		t.Fatalf("pr status: %d\n%s", code, out)
+	}
+	mu.Lock()
+	q = queries["/merge_requests"]
+	mu.Unlock()
+	if !strings.Contains(q, "source_branch=feature%2Fpay") {
+		t.Fatalf("status query = %q", q)
+	}
+
+	// review from the base branch: review branch, summary and full patch
+	git(t, dir, "checkout", "-q", "main")
+	out, code = runEnv(t, dir, env, "", bin, "review", "5", "--diff")
+	for _, want := range []string{"tide/review/pr-5", "approved by dani", "pay.txt", "diff --git", "+p"} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Fatalf("review --diff lacks %q (exit %d):\n%s", want, code, out)
+		}
+	}
+
+	// --reset warns, asks, and only discards on a yes
+	testutil.WriteFile(t, dir, "mine.txt", "mine\n")
+	git(t, dir, "add", "mine.txt")
+	if o, c := git(t, dir, "commit", "-q", "-m", "chore: my review notes"); c != 0 {
+		t.Fatalf("commit: %s", o)
+	}
+	mine, _ := git(t, dir, "rev-parse", "HEAD")
+
+	out, code = runEnv(t, dir, env, "n\n", bin, "review", "5", "--reset")
+	if code == 0 || !strings.Contains(out, "chore: my review notes") || !strings.Contains(out, "discard 1 local commit") {
+		t.Fatalf("declined reset: %d\n%s", code, out)
+	}
+	if now, _ := git(t, dir, "rev-parse", "HEAD"); now != mine {
+		t.Fatal("commit discarded although the user said no")
+	}
+	if out, code = runEnv(t, dir, env, "", bin, "review", "5", "--reset", "--yes"); code != 0 {
+		t.Fatalf("--reset --yes: %d\n%s", code, out)
+	}
+	if now, _ := git(t, dir, "rev-parse", "HEAD"); now == mine {
+		t.Fatal("--reset --yes did not reset")
+	}
 }

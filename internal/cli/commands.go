@@ -100,14 +100,21 @@ func (e *env) updateCmd() *cobra.Command {
 }
 
 func (e *env) reviewCmd() *cobra.Command {
-	var opts review.Options
+	var (
+		opts review.Options
+		yes  bool
+	)
 	cmd := &cobra.Command{
 		Use:   "review <PR>",
 		Short: "Check out a Pull Request / Merge Request on a local review branch",
 		Long: "Fetch a Pull Request (GitHub) or Merge Request (GitLab) and check it out as " + "tide/review/pr-<number>.\n" +
 			"<PR> is a number, #number (!number on GitLab), or a request URL. Set the provider token (GITHUB_TOKEN or GITLAB_TOKEN,\n" +
-			"or provider_token in secret.tide.yml) for private repositories.",
-		Args: exactArgs(1),
+			"or provider_token in secret.tide.yml) for private repositories.\n" +
+			"It works for requests from forks too, prints the request's metadata and a summary of its changes against the base branch,\n" +
+			"and with --diff the whole patch. --reset moves an existing review branch back to the request and asks first when that\n" +
+			"would discard local commits that are not part of it.",
+		Example: "  gtide review 42\n  gtide review 42 --diff\n  gtide review 42 --reset",
+		Args:    exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
 			if err != nil {
@@ -118,10 +125,15 @@ func (e *env) reviewCmd() *cobra.Command {
 				return err
 			}
 			opts.Ref = args[0]
+			if !yes {
+				opts.Confirm = e.confirm
+			}
 			return review.Run(cmd.Context(), repo, cfg, client, opts, e.p)
 		},
 	}
-	cmd.Flags().BoolVar(&opts.Reset, "reset", false, "discard local commits on an existing review branch")
+	cmd.Flags().BoolVar(&opts.Reset, "reset", false, "discard local commits on an existing review branch (asks first)")
+	cmd.Flags().BoolVar(&opts.Diff, "diff", false, "print the full patch against the base branch")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation of --reset")
 	return cmd
 }
 
@@ -379,8 +391,10 @@ func (e *env) prCmd() *cobra.Command {
 			"(from .tide.yml, or --base). The provider comes from `provider` in .tide.yml, detected from the remote when \"auto\".\n" +
 			"The title defaults to the commit subject (one commit) or the branch name; the body lists the commits.\n" +
 			"Requires the provider token (GITHUB_TOKEN / GITLAB_TOKEN, or provider_token in secret.tide.yml; .env at the repository root\n" +
-			"also works) with write access. Asks for confirmation unless --yes is given.",
-		Args: maxArgs(0),
+			"also works) with write access. Asks for confirmation unless --yes is given.\n\n" +
+			"Subcommands: `pr list`, `pr view <id>` and `pr status` read from the provider; `gtide review <id>` checks a request out.",
+		Example: "  gtide pr --draft\n  gtide pr --base develop --title \"Add authentication\"\n  gtide pr list --state merged --author me\n  gtide pr view 42\n  gtide pr status",
+		Args:    maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
 			if err != nil {
@@ -405,7 +419,80 @@ func (e *env) prCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Body, "body", "", "request body (default: list of commits)")
 	cmd.Flags().BoolVar(&opts.Draft, "draft", false, "open as a draft")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
+	cmd.AddCommand(e.prListCmd(), e.prViewCmd(), e.prStatusCmd())
 	return cmd
+}
+
+func (e *env) prListCmd() *cobra.Command {
+	var opts pr.ListOptions
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List Pull Requests / Merge Requests of the repository",
+		Long: "List the Pull Requests (GitHub) or Merge Requests (GitLab) of the repository, newest first: number, title, author,\n" +
+			"state, source branch and target branch. Filter with --state (open, closed, merged or all), --author and --assignee;\n" +
+			"`me` means the owner of the provider token. Public repositories need no token.",
+		Example: "  gtide pr list\n  gtide pr list --state closed --limit 50\n  gtide pr list --author me --assignee alice",
+		Args:    maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			client, err := e.provider(cmd.Context(), repo, cfg)
+			if err != nil {
+				return err
+			}
+			return pr.List(cmd.Context(), repo, cfg, client, opts, e.p)
+		},
+	}
+	cmd.Flags().StringVar(&opts.State, "state", "open", "open, closed, merged or all")
+	cmd.Flags().StringVar(&opts.Author, "author", "", "only requests by this login (`me` for yourself)")
+	cmd.Flags().StringVar(&opts.Assignee, "assignee", "", "only requests assigned to this login (`me` for yourself)")
+	cmd.Flags().IntVar(&opts.Limit, "limit", pr.DefaultListLimit, fmt.Sprintf("maximum number of requests (1-%d)", pr.MaxListLimit))
+	return cmd
+}
+
+func (e *env) prViewCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "view <id>",
+		Short: "Show the details of a Pull Request / Merge Request",
+		Long: "Show a request: title, description, author, assignees, state, branches, dates, review status, changed files,\n" +
+			"commits and URL. <id> is a number, #number (!number on GitLab), or a request URL.",
+		Example: "  gtide pr view 42",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			client, err := e.provider(cmd.Context(), repo, cfg)
+			if err != nil {
+				return err
+			}
+			return pr.View(cmd.Context(), repo, cfg, client, args[0], e.p)
+		},
+	}
+}
+
+func (e *env) prStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show the Pull Request / Merge Request of the current branch",
+		Long: "Show the request opened from the current branch, if any: title, state, review status, branches, outstanding\n" +
+			"review requests and URL.",
+		Args: maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			client, err := e.provider(cmd.Context(), repo, cfg)
+			if err != nil {
+				return err
+			}
+			return pr.Status(cmd.Context(), repo, cfg, client, e.p)
+		},
+	}
 }
 
 func (e *env) doctorCmd() *cobra.Command {
