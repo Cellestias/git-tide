@@ -3,6 +3,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -23,7 +24,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "gtide"), "../cmd/gtide")
+	build := exec.CommandContext(context.Background(), "go", "build", "-o", filepath.Join(dir, "gtide"), "../cmd/gtide")
 	if out, err := build.CombinedOutput(); err != nil {
 		os.Stderr.Write(out)
 		os.RemoveAll(dir)
@@ -53,7 +54,7 @@ func runIn(t *testing.T, dir, bin string, args ...string) (string, int) {
 // runEnv is runIn with extra environment variables and optional stdin.
 func runEnv(t *testing.T, dir string, extra []string, stdin, bin string, args ...string) (string, int) {
 	t.Helper()
-	cmd := exec.Command(bin, args...)
+	cmd := exec.CommandContext(t.Context(), bin, args...)
 	cmd.Dir = dir
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
