@@ -427,7 +427,7 @@ hooks:
 | `commits.convention` | `conventional` | The only supported convention. |
 | `commits.require_scope` | `false` | Require `type(scope):` instead of `type:`. |
 | `secrets.enabled` | `true` | Scan staged changes for likely secrets. |
-| `secrets.custom_patterns` | none | Extra detectors committed with the project: `name` (letters, digits, spaces, `.`, `_`, `-`) and `pattern` (Go regular expression). At most 100. Prefer `secrets.patterns` in `secret.tide.yml`, which is not committed. |
+| `secrets.custom_patterns` | none | Extra detectors committed with the project: `name` (letters, digits, spaces, `.`, `_`, `-`) and `pattern` (Go regular expression). At most 500. Prefer `secrets.patterns` in `secret.tide.yml`, which is not committed. |
 | `hooks.manage` | `true` | Whether `gtide init` installs hooks. |
 
 ### Providers
@@ -485,6 +485,7 @@ secrets:
 
 - `provider_token` must be a `${VARIABLE_NAME}` reference. A literal token is rejected (and never echoed). Tide resolves the variable at run time from the environment and, if it is empty there, from the same key in `.env`.
 - `secrets.patterns` adds secret-scanning detectors on top of the built-in ones, with the same rules as `secrets.custom_patterns`. They are local, so a team can keep internal patterns out of the repository.
+- A new file ships with a catalog of well-known key formats, all **commented out**: cloud (AWS, Azure, GCP, DigitalOcean, Cloudflare, Vault...), GitLab and other CI/registry tokens, observability tools, messaging and email, payments, AI providers, and generic detectors (JWT, database URLs, `Authorization` headers). To enable one, delete the `# ` at the start of its two lines. Existing files are never touched, so run `gtide init` in a fresh clone or copy the blocks you want from the repository's template. The generic group can flag test fixtures; review it before enabling.
 - `gtide doctor` warns when the file is missing, not ignored, or tracked by Git, and when the referenced variable is not set. `gtide config` never prints these patterns or the token.
 
 ### Where the token comes from

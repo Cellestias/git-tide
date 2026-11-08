@@ -21,7 +21,7 @@ const (
 
 	ConventionConventional = "conventional"
 
-	maxCustomPatterns = 100
+	maxCustomPatterns = 500
 	maxPatternLength  = 512
 )
 

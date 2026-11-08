@@ -85,16 +85,19 @@ hooks:
 `
 
 // secretTemplate is secret.tide.yml. The token is a reference, never a value.
+// Detectors from the catalog are written commented out: enable one by deleting
+// the leading "# " of its two lines.
 const secretTemplate = `# Git Tide local settings. Never commit this file: "gtide init" adds it to .gitignore.
 # provider_token must reference an environment variable (or a key in .env); never paste the token itself.
 provider_token: ${%[1]s}
 
 secrets:
-  # Extra secret-scanning patterns, applied on top of the built-in ones.
-  patterns: []
-  #  - name: AWS Access Key
-  #    pattern: 'AKIA[0-9A-Z]{16}'
-`
+  # Extra secret-scanning detectors, applied on top of the built-in ones (AWS access key IDs, GitHub tokens,
+  # Slack tokens, Stripe live keys, Google API keys, private key headers).
+  # Everything below is disabled. To enable a detector, delete the "# " at the start of its two lines.
+  # Patterns are Go (RE2) regular expressions. For a false positive on one line, add tide:allow-secret to it.
+  patterns:
+%[2]s`
 
 // Run writes .tide.yml and secret.tide.yml (never overwriting an existing one),
 // makes sure secret.tide.yml is git-ignored and, when enabled, installs hooks.
@@ -211,7 +214,7 @@ func ensureSecretFile(ctx context.Context, repo *repository.Repository, path, pr
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, apperr.Wrap(apperr.CodeGeneral, "cannot inspect "+path, "", err)
 	}
-	if err := createExclusive(path, fmt.Sprintf(secretTemplate, tokenVar(ctx, repo, providerName)), 0o600); err != nil {
+	if err := createExclusive(path, fmt.Sprintf(secretTemplate, tokenVar(ctx, repo, providerName), renderCatalog()), 0o600); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return false, nil
 		}

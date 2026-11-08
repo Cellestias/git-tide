@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -195,5 +196,102 @@ func TestInitNeverOverwritesExistingFiles(t *testing.T) {
 	if read(t, filepath.Join(dir, config.FileName)) != "version: 1\nprovider: github\n" ||
 		read(t, filepath.Join(dir, config.SecretFileName)) != "provider_token: ${MINE}\n" {
 		t.Error("an existing file was modified")
+	}
+}
+
+// enableAll turns the commented catalog items of a generated secret.tide.yml into
+// real list items, the way a user would by deleting the leading "# ".
+func enableAll(content string) string {
+	var out []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "    # - name:") || strings.HasPrefix(line, "    #   pattern:") {
+			line = "    " + strings.TrimPrefix(line, "    # ")
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestGeneratedSecretFileStartsWithNoActivePatterns(t *testing.T) {
+	dir := testutil.NewRepo(t)
+	if _, err := Run(context.Background(), open(t, dir), Options{NoHooks: true}); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadLocal(dir)
+	if err != nil || !loaded.Found {
+		t.Fatalf("generated file invalid: %v", err)
+	}
+	if n := len(loaded.Local.Secrets.Patterns); n != 0 {
+		t.Errorf("%d patterns active by default, want 0", n)
+	}
+	if catalogSize() < 100 {
+		t.Errorf("catalog has only %d detectors", catalogSize())
+	}
+}
+
+func TestEveryCatalogPatternCanBeEnabledAndMatchesItsSample(t *testing.T) {
+	dir := testutil.NewRepo(t)
+	res, err := Run(context.Background(), open(t, dir), Options{NoHooks: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(res.SecretPath, []byte(enableAll(read(t, res.SecretPath))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.LoadLocal(dir)
+	if err != nil {
+		t.Fatalf("file with every detector enabled is invalid: %v", err)
+	}
+	pats := loaded.Local.Secrets.Patterns
+	if len(pats) != catalogSize() {
+		t.Fatalf("loaded %d patterns, catalog has %d", len(pats), catalogSize())
+	}
+
+	samples := map[string]string{}
+	for _, g := range secretCatalog {
+		for _, e := range g.Entries {
+			samples[e.Name] = e.Sample
+		}
+	}
+	if len(samples) != catalogSize() {
+		t.Fatalf("duplicate names in the catalog: %d unique of %d", len(samples), catalogSize())
+	}
+	for _, p := range pats {
+		sample, ok := samples[p.Name]
+		if !ok {
+			t.Errorf("%q loaded but not in the catalog", p.Name)
+			continue
+		}
+		re, err := regexp.Compile(p.Pattern)
+		if err != nil {
+			t.Errorf("%s: %v", p.Name, err)
+			continue
+		}
+		if !re.MatchString(sample) {
+			t.Errorf("%s: pattern %q does not match its own sample %q", p.Name, p.Pattern, sample)
+		}
+	}
+}
+
+func TestCatalogDoesNotFlagOrdinaryCode(t *testing.T) {
+	benign := []string{
+		"func main() { fmt.Println(\"hello world\") }",
+		"const maxRetries = 3 // retry the request",
+		"https://example.com/docs/getting-started",
+		"git clone https://github.com/acme/tool.git",
+		"password := os.Getenv(\"DB_PASSWORD\")",
+		"commit 4dc985a docs(readme): document providers",
+		"version: 1.2.3",
+		"sha256: " + strings.Repeat("0123456789abcdef", 4),
+	}
+	for _, g := range secretCatalog {
+		for _, e := range g.Entries {
+			re := regexp.MustCompile(e.Pattern)
+			for _, line := range benign {
+				if re.MatchString(line) {
+					t.Errorf("%s flags ordinary text %q", e.Name, line)
+				}
+			}
+		}
 	}
 }
