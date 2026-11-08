@@ -30,6 +30,9 @@ type Options struct {
 	Draft bool
 	// Confirm is asked before anything is pushed. Nil means "proceed".
 	Confirm func(prompt string) (bool, error)
+	// Ask reads one line of free text (the title and body prompts). Nil means
+	// non-interactive: description.pr.md is used when present, else the defaults.
+	Ask func(prompt string) (string, error)
 }
 
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, opts Options, p output.Printer) error {
@@ -81,13 +84,9 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 		p.Warn("%d file(s) have uncommitted changes; they are not part of the pull request", len(changes))
 	}
 
-	title := opts.Title
-	if title == "" {
-		title = DefaultTitle(current, subjects)
-	}
-	body := opts.Body
-	if body == "" {
-		body = DefaultBody(subjects)
+	title, body, err := compose(repo.Root, current, base, subjects, opts, p)
+	if err != nil {
+		return err
 	}
 
 	p.Line("%s %s → %s in %s%s", capitalize(noun), current, base, ghRepo, draftNote(opts.Draft))
@@ -126,6 +125,67 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 	}
 	p.Success("Opened %s: %s", ref(c, created.Number), clean(created.URL))
 	return nil
+}
+
+// compose decides the title and body. Flags win. Otherwise description.pr.md,
+// when present and accepted, then what the user types at the prompts, then the
+// defaults derived from the commits.
+func compose(root, current, base string, subjects []string, opts Options, p output.Printer) (title, body string, err error) {
+	title, body = opts.Title, opts.Body
+	if title == "" || body == "" {
+		tpl, found, err := LoadTemplate(root)
+		if err != nil {
+			return "", "", err
+		}
+		useFile := found
+		if found {
+			tpl = tpl.Render(Vars{Branch: current, Base: base, Commits: subjects})
+			if opts.Ask != nil && opts.Confirm != nil {
+				p.Line("Found %s:", TemplateFile)
+				p.Line("%s", tpl.Preview())
+				if useFile, err = opts.Confirm("Build the pull request from " + TemplateFile + "? [y/N] "); err != nil {
+					return "", "", apperr.Wrap(apperr.CodeGeneral, "cannot read confirmation", "use --yes to skip the prompt", err)
+				}
+			}
+		}
+		switch {
+		case useFile:
+			if title == "" {
+				title = tpl.Title
+			}
+			if body == "" {
+				body = tpl.Body
+			}
+		case opts.Ask != nil:
+			if title == "" {
+				if title, err = ask(opts.Ask, fmt.Sprintf("Title (Enter for %q): ", ellipsize(clean(DefaultTitle(current, subjects)), 60))); err != nil {
+					return "", "", err
+				}
+				title = truncate(strings.Join(strings.Fields(clean(title)), " "))
+			}
+			if body == "" {
+				if body, err = ask(opts.Ask, "Body (Enter for the commit list): "); err != nil {
+					return "", "", err
+				}
+				body = cleanText(body)
+			}
+		}
+	}
+	if strings.TrimSpace(title) == "" {
+		title = DefaultTitle(current, subjects)
+	}
+	if strings.TrimSpace(body) == "" {
+		body = DefaultBody(subjects)
+	}
+	return title, body, nil
+}
+
+func ask(fn func(string) (string, error), prompt string) (string, error) {
+	answer, err := fn(prompt)
+	if err != nil {
+		return "", apperr.Wrap(apperr.CodeGeneral, "cannot read the answer", "use --title and --body, or --yes, to skip the prompts", err)
+	}
+	return strings.TrimSpace(answer), nil
 }
 
 // DefaultTitle is the commit subject when the branch has a single commit;

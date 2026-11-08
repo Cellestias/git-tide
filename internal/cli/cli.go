@@ -29,6 +29,8 @@ type env struct {
 	in  io.Reader
 	p   output.Printer
 	dir string
+
+	reader *bufio.Reader // shared by every prompt so buffered input is not lost
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -131,17 +133,45 @@ type hookCtx struct {
 	cfg  domain.Config
 }
 
+func (e *env) lines() *bufio.Reader {
+	if e.reader == nil {
+		e.reader = bufio.NewReader(e.in)
+	}
+	return e.reader
+}
+
 // confirm asks a yes/no question on the error stream and reads the answer from
 // stdin. Anything but "y"/"yes" (including EOF) is a no.
 func (e *env) confirm(prompt string) (bool, error) {
-	_, _ = fmt.Fprint(e.p.Err, prompt)
-	line, err := bufio.NewReader(e.in).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	line, err := e.ask(prompt)
+	if err != nil {
 		return false, err
 	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
+	switch strings.ToLower(line) {
 	case "y", "yes":
 		return true, nil
 	}
 	return false, nil
+}
+
+// ask prints prompt on the error stream and returns one line of stdin, without
+// the line ending. EOF yields what was read, so an empty answer.
+func (e *env) ask(prompt string) (string, error) {
+	_, _ = fmt.Fprint(e.p.Err, prompt)
+	line, err := e.lines().ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+// interactive reports whether stdin is a terminal, the only case where free-text
+// prompts make sense: a pipe would feed them answers meant for other questions.
+func (e *env) interactive() bool {
+	f, ok := e.in.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

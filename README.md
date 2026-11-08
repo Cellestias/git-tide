@@ -366,11 +366,31 @@ Flow:
 
 1. Resolves the repository from the configured remote and the base branch (`--base`, else `branches.base`, else `default_base`).
 2. Refuses on a detached HEAD, on the base branch, on a protected branch, or when the branch has no commits ahead of the base.
-3. Fetches the base and shows the title, base, and commit count.
-4. Asks for confirmation (skip with `--yes`). Declining pushes nothing and creates nothing (only the base branch is fetched).
+3. Fetches the base, then decides the title and body (see below).
+4. Shows the title, base, and commit count, and asks for confirmation (skip with `--yes`). Declining pushes nothing and creates nothing (only the base branch is fetched).
 5. Pushes the branch (your `pre-push` hook still applies) and creates the PR.
 
-Defaults: the title is the commit subject when the branch has exactly one commit, otherwise the humanised branch name (`feature/login-page` becomes "Login page"). The body lists the commit subjects. If the provider rejects the request after the push (for example, a request already exists for the branch), the branch stays pushed and the error says so.
+**Title and body.** In a terminal, Tide asks for each one; an empty answer (just Enter) keeps the default. The default title is the commit subject when the branch has exactly one commit, otherwise the humanised branch name (`feature/login-page` becomes "Login page"), and the default body lists the commit subjects. `--title` and `--body` skip their prompt. The body prompt reads one line; for longer text use `--body` or the template below.
+
+**Template: `description.pr.md`.** If this file exists at the repository root, Tide shows a preview and asks `Build the pull request from description.pr.md? [y/N]` instead of the two prompts. Answer `n` and it falls back to the prompts. Commit it so the whole team shares the same template.
+
+```markdown
+# feat: {{branch}}
+
+## Summary
+{{commits}}
+
+## Checklist
+- [ ] Tests added
+- [ ] Docs updated
+```
+
+- The first line, if it starts with `# `, is the title; everything after it is the body. Without that line the whole file is the body and the title falls back to the default.
+- Placeholders, expanded as plain text in one pass: `{{commits}}` (commit subjects as a list), `{{branch}}`, `{{base}}`, `{{commit_count}}`. Anything else is left as written.
+- `--title` and `--body` still win over the file for their own field.
+- The file must be a regular file (no symlink) up to 64 KiB.
+
+With `--yes`, or when stdin is not a terminal (a script, CI), Tide asks nothing: it uses the template when the file exists, otherwise the defaults. If the provider rejects the request after the push (for example, a request already exists for the branch), the branch stays pushed and the error says so.
 
 ### `gtide pr list`
 
