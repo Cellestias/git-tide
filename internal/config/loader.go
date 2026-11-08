@@ -27,12 +27,28 @@ type Result struct {
 	Config domain.Config
 	Path   string
 	Found  bool
+	// Local is secret.tide.yml; its scanning patterns are already merged into Config.
+	Local LocalResult
 }
 
-// Load reads FileName from repoRoot. A missing file yields defaults with
-// Found=false. Parse and validation failures are returned as exit-code-3 errors
-// that include the file path.
+// Load reads FileName and the optional SecretFileName from repoRoot. A missing
+// FileName yields defaults with Found=false. Parse and validation failures are
+// returned as exit-code-3 errors that include the file path.
 func Load(repoRoot string) (Result, error) {
+	res, err := loadShared(repoRoot)
+	if err != nil {
+		return res, err
+	}
+	local, err := LoadLocal(repoRoot)
+	if err != nil {
+		return res, err
+	}
+	res.Local = local
+	res.Config.Secrets.LocalPatterns = local.Local.Secrets.Patterns
+	return res, nil
+}
+
+func loadShared(repoRoot string) (Result, error) {
 	path := filepath.Join(repoRoot, FileName)
 	res := Result{Config: domain.Default(), Path: path}
 

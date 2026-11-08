@@ -14,14 +14,16 @@ import (
 	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/github"
 	"github.com/cellestias/git-tide/internal/output"
+	"github.com/cellestias/git-tide/internal/provider"
 	"github.com/cellestias/git-tide/internal/testutil"
 )
 
 type fakeGH struct {
-	protected    map[string]bool
-	prs          []github.PullRequest
-	protectedErr error
-	prsErr       error
+	*github.Client // supplies the parsing half of provider.Provider
+	protected      map[string]bool
+	prs            []github.PullRequest
+	protectedErr   error
+	prsErr         error
 }
 
 func (f fakeGH) ListProtectedBranches(context.Context, github.Repo) (map[string]bool, bool, error) {
@@ -66,7 +68,7 @@ func setup(t *testing.T) fixture {
 	return fixture{repo, dir, bare}
 }
 
-func run(t *testing.T, f fixture, cfg domain.Config, gh GitHub, opts Options) (string, string, error) {
+func run(t *testing.T, f fixture, cfg domain.Config, gh provider.Provider, opts Options) (string, string, error) {
 	t.Helper()
 	var out, errOut bytes.Buffer
 	err := Run(context.Background(), f.repo, cfg, gh, opts, output.Printer{Out: &out, Err: &errOut})
@@ -248,7 +250,7 @@ func TestGitHubColumn(t *testing.T) {
 			{Number: 99, HeadRef: "feature/old", HeadRepo: "someone/fork"}, // fork: ignored
 		},
 	}
-	out, _, err := run(t, f, cfgFor(), gh, Options{GitHub: true})
+	out, _, err := run(t, f, cfgFor(), gh, Options{Provider: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +272,7 @@ func TestGitHubDegradesToQuestionMarks(t *testing.T) {
 	f := setup(t)
 	githubRemote(t, f)
 	gh := fakeGH{protectedErr: github.ErrNotFound, prsErr: errors.New("boom\x1b[31m")}
-	out, errOut, err := run(t, f, cfgFor(), gh, Options{GitHub: true})
+	out, errOut, err := run(t, f, cfgFor(), gh, Options{Provider: true})
 	if err != nil {
 		t.Fatalf("GitHub failure must not fail the command: %v", err)
 	}
@@ -283,7 +285,7 @@ func TestGitHubDegradesToQuestionMarks(t *testing.T) {
 
 	// a non-GitHub remote also degrades
 	testutil.Run(t, f.dir, "remote", "set-url", "origin", "https://gitlab.com/a/b.git")
-	out, errOut, err = run(t, f, cfgFor(), gh, Options{GitHub: true})
+	out, errOut, err = run(t, f, cfgFor(), gh, Options{Provider: true})
 	if err != nil || !strings.Contains(errOut, "GitHub column unavailable") || !strings.Contains(out, "GITHUB") {
 		t.Errorf("err=%v stderr=%q", err, errOut)
 	}

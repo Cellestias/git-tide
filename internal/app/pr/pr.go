@@ -1,5 +1,5 @@
-// Package pr implements `gtide pr`: push the current branch and open a GitHub
-// Pull Request against its configured base.
+// Package pr implements `gtide pr`: push the current branch and open a Pull
+// Request (GitHub) or Merge Request (GitLab) against its configured base.
 package pr
 
 import (
@@ -14,19 +14,14 @@ import (
 	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/domain/policy"
 	"github.com/cellestias/git-tide/internal/git/repository"
-	"github.com/cellestias/git-tide/internal/github"
 	"github.com/cellestias/git-tide/internal/output"
+	"github.com/cellestias/git-tide/internal/provider"
 )
 
 const (
 	maxTitle       = 200
 	maxBodyCommits = 50
 )
-
-// Creator is the slice of the GitHub client this use case needs.
-type Creator interface {
-	CreatePullRequest(ctx context.Context, repo github.Repo, npr github.NewPullRequest) (github.PullRequest, error)
-}
 
 type Options struct {
 	Base  string // overrides the base from configuration
@@ -37,20 +32,21 @@ type Options struct {
 	Confirm func(prompt string) (bool, error)
 }
 
-func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c Creator, opts Options, p output.Printer) error {
-	ghRepo, err := github.RepoFromRemote(ctx, repo, cfg.Remote)
-	if errors.Is(err, github.ErrNoRemote) {
+func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, opts Options, p output.Printer) error {
+	noun := c.Noun()
+	ghRepo, err := provider.RepoFromRemote(ctx, repo, c, cfg.Remote)
+	if errors.Is(err, provider.ErrNoRemote) {
 		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not configured", cfg.Remote),
 			"add it with `git remote add` or change `remote` in .tide.yml", err)
 	}
 	if err != nil {
-		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not a supported GitHub remote", cfg.Remote),
-			"only github.com remotes are supported", err)
+		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not a supported %s remote", cfg.Remote, c.Name()),
+			"check the remote URL, or set `provider` in .tide.yml", err)
 	}
 
 	current, err := repo.CurrentBranch(ctx)
 	if errors.Is(err, repository.ErrDetachedHead) {
-		return apperr.New(apperr.CodeUnsafeRepo, "HEAD is detached; there is no branch to open a pull request from",
+		return apperr.New(apperr.CodeUnsafeRepo, "HEAD is detached; there is no branch to open a "+noun+" from",
 			"create one first: git switch -c <branch>")
 	}
 	if err != nil {
@@ -64,7 +60,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 		return apperr.Usage("invalid base branch: %v", err)
 	}
 	if current == base {
-		return apperr.New(apperr.CodeUnsafeRepo, fmt.Sprintf("%q is the base branch; nothing to open a pull request from", current),
+		return apperr.New(apperr.CodeUnsafeRepo, fmt.Sprintf("%q is the base branch; nothing to open a "+noun+" from", current),
 			"switch to a working branch, or pass --base")
 	}
 	if d := (policy.Protection{Protected: cfg.Branches.Protected}).Push(current); !d.Allowed {
@@ -99,11 +95,11 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 		body = DefaultBody(subjects)
 	}
 
-	p.Line("Pull request %s → %s in %s%s", current, base, ghRepo, draftNote(opts.Draft))
+	p.Line("%s %s → %s in %s%s", capitalize(noun), current, base, ghRepo, draftNote(opts.Draft))
 	p.Info("title:   %s", clean(title))
 	p.Info("commits: %d", n)
 	if opts.Confirm != nil {
-		ok, err := opts.Confirm(fmt.Sprintf("Push %s to %s and open the pull request? [y/N] ", current, cfg.Remote))
+		ok, err := opts.Confirm(fmt.Sprintf("Push %s to %s and open the %s? [y/N] ", current, cfg.Remote, noun))
 		if err != nil {
 			return apperr.Wrap(apperr.CodeGeneral, "cannot read confirmation", "use --yes to skip the prompt", err)
 		}
@@ -117,23 +113,23 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 		return apperr.Wrap(apperr.CodeExternal, "push failed", "a pre-push hook or the remote rejected it; see the message above", err)
 	}
 
-	p.Step("Opening pull request")
-	created, err := c.CreatePullRequest(ctx, ghRepo, github.NewPullRequest{
+	p.Step("Opening %s", noun)
+	created, err := c.CreatePullRequest(ctx, ghRepo, provider.NewPullRequest{
 		Title: title, Body: body, Head: current, Base: base, Draft: opts.Draft,
 	})
-	var verr *github.ErrValidation
+	var verr *provider.ErrValidation
 	switch {
 	case errors.As(err, &verr):
 		// the message is remote-controlled: use the cleaned text, not the wrapped cause
-		return apperr.New(apperr.CodeExternal, "GitHub rejected the pull request: "+clean(verr.Message),
+		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s rejected the %s: %s", providerLabel(c), noun, clean(verr.Message)),
 			"the branch was pushed; fix the problem and re-run `gtide pr`")
-	case errors.Is(err, github.ErrNotFound):
+	case errors.Is(err, provider.ErrNotFound):
 		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s not found or the token cannot write to it", ghRepo),
-			"GITHUB_TOKEN needs pull-request write access; the branch was pushed")
+			c.TokenEnv()+" needs "+noun+" write access; the branch was pushed")
 	case err != nil:
-		return apperr.Wrap(apperr.CodeExternal, "cannot create pull request", "the branch was pushed; re-run `gtide pr`", err)
+		return apperr.Wrap(apperr.CodeExternal, "cannot create "+noun, "the branch was pushed; re-run `gtide pr`", err)
 	}
-	p.Success("Opened #%d: %s", created.Number, clean(created.URL))
+	p.Success("Opened %s: %s", ref(c, created.Number), clean(created.URL))
 	return nil
 }
 
@@ -175,6 +171,29 @@ func truncate(s string) string {
 		return string(r[:maxTitle-1]) + "…"
 	}
 	return s
+}
+
+// providerLabel is the display name of the hosting service.
+func providerLabel(p provider.Provider) string {
+	if p.Name() == provider.GitLab {
+		return "GitLab"
+	}
+	return "GitHub"
+}
+
+// ref renders a request number the way the provider does: #12 or !12.
+func ref(p provider.Provider, n int) string {
+	if p.Name() == provider.GitLab {
+		return fmt.Sprintf("!%d", n)
+	}
+	return fmt.Sprintf("#%d", n)
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func draftNote(draft bool) string {

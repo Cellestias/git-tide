@@ -19,15 +19,18 @@ import (
 	"github.com/cellestias/git-tide/internal/app/update"
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/config"
+	"github.com/cellestias/git-tide/internal/provider"
 )
 
 func (e *env) initCmd() *cobra.Command {
 	var opts initrepo.Options
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create " + config.FileName + " and install Git hooks",
-		Long: "Create " + config.FileName + " (never overwriting an existing one) and install Tide's Git hooks.\n" +
-			"An existing hook is preserved as <hook>.pre-tide and still runs after Tide's checks.",
+		Short: "Create " + config.FileName + ", " + config.SecretFileName + " and install Git hooks",
+		Long: "Create " + config.FileName + " (shared settings) and " + config.SecretFileName + " (local credentials reference and\n" +
+			"secret patterns), add " + config.SecretFileName + " to .gitignore, and install Tide's Git hooks. Existing files are never overwritten.\n" +
+			"An existing hook is preserved as <hook>.pre-tide and still runs after Tide's checks.\n" +
+			"--provider chooses github, gitlab, or auto (default: detect from the remote).",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, err := e.openRepo(cmd.Context())
@@ -42,9 +45,25 @@ func (e *env) initCmd() *cobra.Command {
 				return err
 			}
 			if res.ConfigCreated {
-				e.p.Success("created %s (base branch: %s)", res.ConfigPath, res.Base)
+				e.p.Success("created %s (provider: %s, base branch: %s)", res.ConfigPath, res.Provider, res.Base)
 			} else {
-				e.p.Info("%s already exists; left unchanged", res.ConfigPath)
+				e.p.Info("preserved %s (already exists)", res.ConfigPath)
+			}
+			for _, n := range res.Notes {
+				e.p.Warn("%s", n)
+			}
+			if res.SecretCreated {
+				e.p.Success("created %s (set the token variable it references)", res.SecretPath)
+			} else {
+				e.p.Info("preserved %s (already exists)", res.SecretPath)
+			}
+			switch {
+			case res.IgnoreCreated:
+				e.p.Success("created .gitignore with %s", config.SecretFileName)
+			case res.IgnoreUpdated:
+				e.p.Success("updated .gitignore: added %s", config.SecretFileName)
+			default:
+				e.p.Info("preserved .gitignore (%s already ignored)", config.SecretFileName)
 			}
 			if res.HooksSkipped {
 				e.p.Info("hooks not installed")
@@ -53,6 +72,7 @@ func (e *env) initCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.Base, "base", "", "default base branch (default: detected from the repository)")
+	cmd.Flags().StringVar(&opts.Provider, "provider", "", "hosting provider: auto, github or gitlab (default: auto)")
 	cmd.Flags().BoolVar(&opts.NoHooks, "no-hooks", false, "do not install Git hooks")
 	return cmd
 }
@@ -83,16 +103,17 @@ func (e *env) reviewCmd() *cobra.Command {
 	var opts review.Options
 	cmd := &cobra.Command{
 		Use:   "review <PR>",
-		Short: "Check out a Pull Request on a local review branch",
-		Long: "Fetch a GitHub Pull Request and check it out as " + "tide/review/pr-<number>.\n" +
-			"<PR> is a number, #number, or a pull request URL. Set GITHUB_TOKEN for private repositories.",
+		Short: "Check out a Pull Request / Merge Request on a local review branch",
+		Long: "Fetch a Pull Request (GitHub) or Merge Request (GitLab) and check it out as " + "tide/review/pr-<number>.\n" +
+			"<PR> is a number, #number (!number on GitLab), or a request URL. Set the provider token (GITHUB_TOKEN or GITLAB_TOKEN,\n" +
+			"or provider_token in secret.tide.yml) for private repositories.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
 			if err != nil {
 				return err
 			}
-			client, err := e.githubClient(cmd.Context(), repo)
+			client, err := e.provider(cmd.Context(), repo, cfg)
 			if err != nil {
 				return err
 			}
@@ -133,9 +154,10 @@ func (e *env) changeCmd() *cobra.Command {
 
 func (e *env) branchCmd() *cobra.Command {
 	var (
-		opts   branches.Options
-		stale  int
-		sortBy string
+		opts         branches.Options
+		stale        int
+		sortBy       string
+		legacyHosted bool
 	)
 	cmd := &cobra.Command{
 		Use:     "branch",
@@ -143,10 +165,10 @@ func (e *env) branchCmd() *cobra.Command {
 		Short:   "List branches with their base, upstream, status and last activity",
 		Long: "List local branches with the last update, last commit author, ahead/behind against the upstream and against\n" +
 			"the base branch from .tide.yml, and whether they are protected or already merged.\n" +
-			"Local data only by default; --remote and --github add network calls.\n" +
+			"Local data only by default; --remote and --hosted add network calls.\n" +
 			"The author is the author of the last commit: Git does not record who created a branch.",
 		Example: "  gtide branch\n" +
-			"  gtide branch --remote --github     # include remote-only branches, GitHub protection and open PRs\n" +
+			"  gtide branch --remote --hosted     # include remote-only branches, provider protection and open PRs/MRs\n" +
 			"  gtide branch --mine --sort name\n" +
 			"  gtide branch --merged              # candidates for cleanup\n" +
 			"  gtide branch --stale 30",
@@ -157,9 +179,10 @@ func (e *env) branchCmd() *cobra.Command {
 				return err
 			}
 			opts.StaleDays, opts.Sort = stale, sortBy
-			var gh branches.GitHub
-			if opts.GitHub {
-				client, err := e.githubClient(cmd.Context(), repo)
+			opts.Provider = opts.Provider || legacyHosted
+			var gh provider.Provider
+			if opts.Provider {
+				client, err := e.provider(cmd.Context(), repo, cfg)
 				if err != nil {
 					return err
 				}
@@ -170,7 +193,9 @@ func (e *env) branchCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.BoolVar(&opts.Remote, "remote", false, "also list branches that only exist on the remote (fetches first)")
-	f.BoolVar(&opts.GitHub, "github", false, "add a GitHub column: branch protection and open pull request (GITHUB_TOKEN for private repos)")
+	f.BoolVar(&opts.Provider, "hosted", false, "add a GITHUB/GITLAB column: branch protection and open pull/merge request (provider token for private repos)")
+	f.BoolVar(&legacyHosted, "github", false, "alias of --hosted")
+	_ = f.MarkHidden("github")
 	f.BoolVar(&opts.Mine, "mine", false, "only branches whose last author is your git user.email")
 	f.IntVar(&stale, "stale", 0, "only branches with no commits for more than `days`")
 	f.BoolVar(&opts.Merged, "merged", false, "only branches with nothing the base branch lacks")
@@ -349,23 +374,25 @@ func (e *env) prCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "pr",
-		Short: "Push the current branch and open a GitHub Pull Request",
-		Long: "Push the current branch and open a Pull Request against its base branch (from .tide.yml, or --base).\n" +
+		Short: "Push the current branch and open a Pull Request / Merge Request",
+		Long: "Push the current branch and open a Pull Request (GitHub) or Merge Request (GitLab) against its base branch\n" +
+			"(from .tide.yml, or --base). The provider comes from `provider` in .tide.yml, detected from the remote when \"auto\".\n" +
 			"The title defaults to the commit subject (one commit) or the branch name; the body lists the commits.\n" +
-			"Requires GITHUB_TOKEN (environment or .env at the repository root) with pull-request write access. Asks for confirmation unless --yes is given.",
+			"Requires the provider token (GITHUB_TOKEN / GITLAB_TOKEN, or provider_token in secret.tide.yml; .env at the repository root\n" +
+			"also works) with write access. Asks for confirmation unless --yes is given.",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, cfg, err := e.requireConfig(cmd.Context())
 			if err != nil {
 				return err
 			}
-			client, err := e.githubClient(cmd.Context(), repo)
+			client, err := e.provider(cmd.Context(), repo, cfg)
 			if err != nil {
 				return err
 			}
-			if client.Token == "" {
-				return apperr.New(apperr.CodeConfig, "GITHUB_TOKEN is not set",
-					"export GITHUB_TOKEN, or put it in .env at the repository root; it needs pull-request write access")
+			if !client.HasToken() {
+				return apperr.New(apperr.CodeConfig, client.TokenEnv()+" is not set",
+					"export "+client.TokenEnv()+" (and reference it as provider_token: ${"+client.TokenEnv()+"} in secret.tide.yml), or put it in .env at the repository root; it needs "+client.Noun()+" write access")
 			}
 			if !yes {
 				opts.Confirm = e.confirm
@@ -374,8 +401,8 @@ func (e *env) prCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.Base, "base", "", "base branch (default: resolved from .tide.yml)")
-	cmd.Flags().StringVar(&opts.Title, "title", "", "pull request title (default: derived from commits)")
-	cmd.Flags().StringVar(&opts.Body, "body", "", "pull request body (default: list of commits)")
+	cmd.Flags().StringVar(&opts.Title, "title", "", "request title (default: derived from commits)")
+	cmd.Flags().StringVar(&opts.Body, "body", "", "request body (default: list of commits)")
 	cmd.Flags().BoolVar(&opts.Draft, "draft", false, "open as a draft")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
 	return cmd

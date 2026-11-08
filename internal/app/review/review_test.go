@@ -14,13 +14,15 @@ import (
 	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/github"
 	"github.com/cellestias/git-tide/internal/output"
+	"github.com/cellestias/git-tide/internal/provider"
 	"github.com/cellestias/git-tide/internal/testutil"
 )
 
 type fakePRs struct {
-	pr  github.PullRequest
-	err error
-	got github.Repo
+	*github.Client // supplies the parsing half of provider.Provider
+	pr             github.PullRequest
+	err            error
+	got            github.Repo
 }
 
 func (f *fakePRs) GetPullRequest(_ context.Context, r github.Repo, n int) (github.PullRequest, error) {
@@ -51,7 +53,7 @@ func fake() *fakePRs {
 	return &fakePRs{pr: github.PullRequest{Number: 1, Title: "Add pr\x1b[31m", State: "open", Author: "ana", HeadRef: "feature/pr", BaseRef: "main"}}
 }
 
-func run(repo *repository.Repository, prs PullRequests, opts Options) (string, error) {
+func run(repo *repository.Repository, prs provider.Provider, opts Options) (string, error) {
 	var out, errOut bytes.Buffer
 	err := Run(context.Background(), repo, domain.Default(), prs, opts, output.Printer{Out: &out, Err: &errOut})
 	return out.String(), err

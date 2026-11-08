@@ -21,7 +21,7 @@ func TestValidateReportsFields(t *testing.T) {
 	c.Update.Strategy = "squash"
 	c.Commits.Convention = "gitmoji"
 	c.Secrets.CustomPatterns = []CustomPattern{
-		{Name: "Bad Name", Pattern: "x"},
+		{Name: "-bad", Pattern: "x"},
 		{Name: "ok", Pattern: "("},
 		{Name: "dup", Pattern: "a"},
 		{Name: "dup", Pattern: "b"},

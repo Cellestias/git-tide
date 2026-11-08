@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -15,7 +16,8 @@ import (
 	"github.com/cellestias/git-tide/internal/git/executor"
 	"github.com/cellestias/git-tide/internal/git/hooks"
 	"github.com/cellestias/git-tide/internal/git/repository"
-	"github.com/cellestias/git-tide/internal/github"
+	"github.com/cellestias/git-tide/internal/provider"
+	"github.com/cellestias/git-tide/internal/providers"
 )
 
 type Level int
@@ -77,13 +79,28 @@ func Run(ctx context.Context, ex executor.Executor, dir string) []Check {
 	}
 	c := cfg.Config
 
-	if url, err := repo.RemoteURL(ctx, c.Remote); err != nil {
-		add(Warn, "remote", fmt.Sprintf("remote %q is not configured", c.Remote), "`gtide update` and `gtide review` need it")
-	} else if gh, err := github.ParseRemoteURL(executor.Redact(url)); err != nil {
-		add(Warn, "remote", fmt.Sprintf("%q is not a github.com remote", c.Remote), "`gtide review` supports github.com only")
+	resolved, rerr := repo.RemoteURL(ctx, c.Remote)
+	if rerr != nil {
+		add(Warn, "remote", fmt.Sprintf("remote %q is not configured", c.Remote), "`gtide update`, `gtide pr` and `gtide review` need it")
 	} else {
-		add(OK, "remote", fmt.Sprintf("%s → %s", c.Remote, gh), "")
+		configured, _ := repo.RemoteConfiguredURL(ctx, c.Remote)
+		name, err := providers.Resolve(c.Provider, configured, executor.Redact(resolved))
+		if err != nil {
+			add(Warn, "provider", fmt.Sprintf("cannot detect the provider from remote %q", c.Remote), "set `provider: github` or `provider: gitlab` in .tide.yml")
+		} else if p, err := providers.New(name, provider.Host(configured), ""); err != nil {
+			add(Fail, "provider", err.Error(), "")
+		} else if hosted, err := p.ParseRemoteURL(executor.Redact(resolved)); err != nil {
+			if hosted, err = p.ParseRemoteURL(executor.Redact(configured)); err != nil {
+				add(Warn, "remote", fmt.Sprintf("%q is not a %s remote", c.Remote, name), "check the remote URL or the `provider` setting")
+			} else {
+				add(OK, "remote", fmt.Sprintf("%s → %s (%s)", c.Remote, hosted, name), "")
+			}
+		} else {
+			add(OK, "remote", fmt.Sprintf("%s → %s (%s)", c.Remote, hosted, name), "")
+		}
 	}
+
+	checks = append(checks, secretFileChecks(ctx, repo, ex)...)
 
 	base := c.Branches.DefaultBase
 	local, _ := repo.LocalBranchExists(ctx, base)
@@ -143,4 +160,27 @@ func parseVersion(s string) (major, minor int, ok bool) {
 	major, err1 := strconv.Atoi(m[1])
 	minor, err2 := strconv.Atoi(m[2])
 	return major, minor, errors.Join(err1, err2) == nil
+}
+
+// secretFileChecks inspects secret.tide.yml: present, valid, and not committed.
+func secretFileChecks(ctx context.Context, repo *repository.Repository, _ executor.Executor) []Check {
+	local, err := config.LoadLocal(repo.Root)
+	switch {
+	case err != nil:
+		return []Check{{Level: Fail, Name: config.SecretFileName, Detail: err.Error()}}
+	case !local.Found:
+		return []Check{{Level: Warn, Name: config.SecretFileName, Detail: "not found; provider commands read the token from the environment", Hint: "run `gtide init`"}}
+	}
+	var out []Check
+	if tracked, err := repo.IsTracked(ctx, config.SecretFileName); err == nil && tracked {
+		out = append(out, Check{Level: Fail, Name: config.SecretFileName, Detail: "is tracked by Git", Hint: "run `git rm --cached " + config.SecretFileName + "` and commit"})
+	} else if ignored, err := repo.IsIgnored(ctx, config.SecretFileName); err == nil && !ignored {
+		out = append(out, Check{Level: Warn, Name: config.SecretFileName, Detail: "is not in .gitignore", Hint: "run `gtide init` to add it"})
+	} else {
+		out = append(out, Check{Level: OK, Name: config.SecretFileName, Detail: "present and git-ignored"})
+	}
+	if v, _ := local.Local.TokenVar(); v != "" && os.Getenv(v) == "" {
+		out = append(out, Check{Level: Warn, Name: "provider token", Detail: "$" + v + " is not set", Hint: "export it, or put it in .env (git-ignored)"})
+	}
+	return out
 }

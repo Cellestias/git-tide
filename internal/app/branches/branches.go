@@ -15,8 +15,8 @@ import (
 	"github.com/cellestias/git-tide/internal/domain/branch"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/git/repository"
-	"github.com/cellestias/git-tide/internal/github"
 	"github.com/cellestias/git-tide/internal/output"
+	"github.com/cellestias/git-tide/internal/provider"
 )
 
 // Sort orders.
@@ -26,15 +26,9 @@ const (
 	SortAhead = "ahead"
 )
 
-// GitHub is the slice of the GitHub client this use case needs.
-type GitHub interface {
-	ListProtectedBranches(ctx context.Context, repo github.Repo) (map[string]bool, bool, error)
-	ListOpenPullRequests(ctx context.Context, repo github.Repo) ([]github.PullRequest, bool, error)
-}
-
 type Options struct {
 	Remote    bool // include remote-only branches (fetches first)
-	GitHub    bool // add the GitHub column (needs the API)
+	Provider  bool // add the provider column (needs the API)
 	Mine      bool // only branches whose last author is the configured user.email
 	StaleDays int  // only branches without commits for more than N days (0 = off)
 	Merged    bool // only branches with nothing the base lacks
@@ -53,7 +47,7 @@ type row struct {
 	remoteOnly bool
 }
 
-func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, gh GitHub, opts Options, p output.Printer) error {
+func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, gh provider.Provider, opts Options, p output.Printer) error {
 	sortBy := opts.Sort
 	if sortBy == "" {
 		sortBy = SortDate
@@ -140,7 +134,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, gh
 	sortRows(rows, sortBy)
 
 	var ghCol *githubInfo
-	if opts.GitHub && gh != nil {
+	if opts.Provider && gh != nil {
 		ghCol = loadGitHub(ctx, repo, cfg, gh, p)
 	}
 	render(p, rows, ghCol, now)
@@ -186,6 +180,8 @@ func sortRows(rows []row, by string) {
 }
 
 type githubInfo struct {
+	header       string // column title: GITHUB or GITLAB
+	prefix       string // "PR #" or "MR !"
 	protected    map[string]bool
 	protectedErr bool
 	prs          map[string]int // head branch -> PR number
@@ -194,32 +190,35 @@ type githubInfo struct {
 
 // loadGitHub degrades gracefully: any failure becomes a warning and a "?" in
 // the column, never a failed command.
-func loadGitHub(ctx context.Context, repo *repository.Repository, cfg domain.Config, gh GitHub, p output.Printer) *githubInfo {
-	info := &githubInfo{}
-	ghRepo, err := github.RepoFromRemote(ctx, repo, cfg.Remote)
+func loadGitHub(ctx context.Context, repo *repository.Repository, cfg domain.Config, gh provider.Provider, p output.Printer) *githubInfo {
+	info := &githubInfo{header: strings.ToUpper(columnName(gh)), prefix: "PR #"}
+	if gh.Name() == provider.GitLab {
+		info.prefix = "MR !"
+	}
+	ghRepo, err := provider.RepoFromRemote(ctx, repo, gh, cfg.Remote)
 	if err != nil {
-		p.Warn("GitHub column unavailable: %v", err)
+		p.Warn("%s column unavailable: %v", columnName(gh), err)
 		info.protectedErr, info.prsErr = true, true
 		return info
 	}
-	p.Note("Querying GitHub for %s", ghRepo)
+	p.Note("Querying %s for %s", columnName(gh), ghRepo)
 	prot, truncated, err := gh.ListProtectedBranches(ctx, ghRepo)
 	if err != nil {
-		p.Warn("cannot read branch protection: %s (set GITHUB_TOKEN for private repositories)", clean(err.Error()))
+		p.Warn("cannot read branch protection: %s (set %s for private repositories)", clean(err.Error()), gh.TokenEnv())
 		info.protectedErr = true
 	}
 	if truncated {
-		p.Warn("GitHub branch list truncated; protection shown for the first branches only")
+		p.Warn("%s branch list truncated; protection shown for the first branches only", columnName(gh))
 	}
 	info.protected = prot
 
 	prs, truncated, err := gh.ListOpenPullRequests(ctx, ghRepo)
 	if err != nil {
-		p.Warn("cannot read pull requests: %s", clean(err.Error()))
+		p.Warn("cannot read %ss: %s", gh.Noun(), clean(err.Error()))
 		info.prsErr = true
 	}
 	if truncated {
-		p.Warn("GitHub pull request list truncated")
+		p.Warn("%s %s list truncated", columnName(gh), gh.Noun())
 	}
 	info.prs = map[string]int{}
 	for _, pr := range prs {
@@ -228,6 +227,14 @@ func loadGitHub(ctx context.Context, repo *repository.Repository, cfg domain.Con
 		}
 	}
 	return info
+}
+
+// columnName is the display name of the hosting service, also the column title.
+func columnName(p provider.Provider) string {
+	if p.Name() == provider.GitLab {
+		return "GitLab"
+	}
+	return "GitHub"
 }
 
 func (g *githubInfo) cell(r row) string {
@@ -241,9 +248,9 @@ func (g *githubInfo) cell(r row) string {
 		parts = append(parts, "protected")
 	}
 	if g.prsErr {
-		parts = append(parts, "PR ?")
+		parts = append(parts, strings.TrimRight(g.prefix, "#!")+"?")
 	} else if n, ok := g.prs[r.ref.Name]; ok {
-		parts = append(parts, fmt.Sprintf("PR #%d", n))
+		parts = append(parts, fmt.Sprintf("%s%d", g.prefix, n))
 	}
 	if len(parts) == 0 {
 		return "-"
@@ -255,7 +262,7 @@ func render(p output.Printer, rows []row, gh *githubInfo, now time.Time) {
 	tw := tabwriter.NewWriter(p.Out, 0, 4, 2, ' ', 0)
 	header := "BRANCH\tUPDATED\tLAST AUTHOR\tUPSTREAM\tBASE\tSTATUS"
 	if gh != nil {
-		header += "\tGITHUB"
+		header += "\t" + gh.header
 	}
 	_, _ = fmt.Fprintln(tw, header)
 	for _, r := range rows {
