@@ -219,12 +219,49 @@ func TestUpdateEndToEnd(t *testing.T) {
 	}
 }
 
+// apiCall is the last request a fake provider API received.
+type apiCall struct {
+	Body  map[string]any
+	Auth  string // Authorization header (GitHub)
+	Token string // PRIVATE-TOKEN header (GitLab)
+	Path  string
+	Calls int
+}
+
+// recorder captures requests from the handler goroutine so the test goroutine
+// can read them without a data race.
+type recorder struct {
+	mu   sync.Mutex
+	last apiCall
+}
+
+func (r *recorder) capture(req *http.Request) {
+	var body map[string]any
+	_ = json.NewDecoder(req.Body).Decode(&body)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.last = apiCall{
+		Body: body, Auth: req.Header.Get("Authorization"), Token: req.Header.Get("PRIVATE-TOKEN"),
+		Path: req.URL.EscapedPath(), Calls: r.last.Calls + 1,
+	}
+}
+
+func (r *recorder) snapshot() apiCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.last
+}
+
+func (r *recorder) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.last = apiCall{}
+}
+
 func TestPREndToEnd(t *testing.T) {
-	var got map[string]any
-	var auth string
+	var rec recorder
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth = r.Header.Get("Authorization")
-		json.NewDecoder(r.Body).Decode(&got)
+		rec.capture(r)
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(`{"number":42,"html_url":"https://github.com/acme/tool/pull/42"}`))
 	}))
@@ -253,7 +290,7 @@ func TestPREndToEnd(t *testing.T) {
 
 	// declined → exit 1, nothing pushed
 	out, code = runEnv(t, dir, apiEnv, "n\n", bin, "pr")
-	if code != 1 || !strings.Contains(out, "nothing was pushed") || got != nil {
+	if code != 1 || !strings.Contains(out, "nothing was pushed") || rec.snapshot().Calls != 0 {
 		t.Fatalf("declined: %d\n%s", code, out)
 	}
 	if o, _ := git(t, bare, "branch", "--list", "feature/*"); strings.TrimSpace(o) != "" {
@@ -265,8 +302,8 @@ func TestPREndToEnd(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "pull/42") {
 		t.Fatalf("confirmed: %d\n%s", code, out)
 	}
-	if auth != "Bearer test-token" || got["head"] != "feature/pay" || got["base"] != "main" || got["draft"] != true || got["title"] != "feat: add pay" {
-		t.Fatalf("request: auth=%q body=%v", auth, got)
+	if c := rec.snapshot(); c.Auth != "Bearer test-token" || c.Body["head"] != "feature/pay" || c.Body["base"] != "main" || c.Body["draft"] != true || c.Body["title"] != "feat: add pay" {
+		t.Fatalf("request: auth=%q body=%v", c.Auth, c.Body)
 	}
 	if o, _ := git(t, bare, "branch", "--list", "feature/pay"); !strings.Contains(o, "feature/pay") {
 		t.Fatal("branch not pushed")
@@ -523,11 +560,9 @@ func gitlabRepo(t *testing.T) (dir, bare string) {
 }
 
 func TestPRGitLabEndToEnd(t *testing.T) {
-	var got map[string]any
-	var token, path string
+	var rec recorder
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, path = r.Header.Get("PRIVATE-TOKEN"), r.URL.EscapedPath()
-		json.NewDecoder(r.Body).Decode(&got)
+		rec.capture(r)
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(`{"iid":5,"web_url":"https://gitlab.com/acme/group/tool/-/merge_requests/5"}`))
 	}))
@@ -557,11 +592,12 @@ func TestPRGitLabEndToEnd(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "merge_requests/5") || !strings.Contains(out, "!5") || !strings.Contains(out, "Merge request") {
 		t.Fatalf("pr: %d\n%s", code, out)
 	}
-	if token != "glpat-test" || path != "/api/v4/projects/acme%2Fgroup%2Ftool/merge_requests" {
-		t.Fatalf("request: token=%q path=%q", token, path)
+	c := rec.snapshot()
+	if c.Token != "glpat-test" || c.Path != "/api/v4/projects/acme%2Fgroup%2Ftool/merge_requests" {
+		t.Fatalf("request: token=%q path=%q", c.Token, c.Path)
 	}
-	if got["source_branch"] != "feature/pay" || got["target_branch"] != "main" || got["title"] != "Draft: feat: add pay" {
-		t.Fatalf("body: %v", got)
+	if c.Body["source_branch"] != "feature/pay" || c.Body["target_branch"] != "main" || c.Body["title"] != "Draft: feat: add pay" {
+		t.Fatalf("body: %v", c.Body)
 	}
 	if o, _ := git(t, bare, "branch", "--list", "feature/pay"); !strings.Contains(o, "feature/pay") {
 		t.Fatal("branch not pushed")
@@ -569,9 +605,9 @@ func TestPRGitLabEndToEnd(t *testing.T) {
 }
 
 func TestPRTokenFromSecretFileReference(t *testing.T) {
-	var token string
+	var rec recorder
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token = r.Header.Get("PRIVATE-TOKEN")
+		rec.capture(r)
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(`{"iid":6,"web_url":"https://gitlab.com/acme/group/tool/-/merge_requests/6"}`))
 	}))
@@ -582,8 +618,8 @@ func TestPRTokenFromSecretFileReference(t *testing.T) {
 	testutil.WriteFile(t, dir, ".tide.yml", strings.Replace(read(t, filepath.Join(dir, ".tide.yml")), "provider: auto", "provider: gitlab", 1))
 	testutil.WriteFile(t, dir, "secret.tide.yml", "provider_token: ${CORP_GITLAB_PAT}\n")
 	env := []string{"TIDE_GITLAB_API_URL=" + srv.URL + "/api/v4", "GITLAB_TOKEN=", "GH_TOKEN=", "GITHUB_TOKEN=", "CORP_GITLAB_PAT=glpat-corp"}
-	if out, code := runEnv(t, dir, env, "", bin, "pr", "--yes"); code != 0 || token != "glpat-corp" {
-		t.Fatalf("pr: %d token=%q\n%s", code, token, out)
+	if out, code := runEnv(t, dir, env, "", bin, "pr", "--yes"); code != 0 || rec.snapshot().Token != "glpat-corp" {
+		t.Fatalf("pr: %d token=%q\n%s", code, rec.snapshot().Token, out)
 	}
 
 	// a literal token in the file is refused and never echoed
@@ -745,9 +781,9 @@ func TestPRWorkflowGitLabEndToEnd(t *testing.T) {
 }
 
 func TestPRUsesDescriptionTemplate(t *testing.T) {
-	var got map[string]any
+	var rec recorder
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewDecoder(r.Body).Decode(&got)
+		rec.capture(r)
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(`{"iid":8,"web_url":"https://gitlab.com/acme/group/tool/-/merge_requests/8"}`))
 	}))
@@ -762,7 +798,7 @@ func TestPRUsesDescriptionTemplate(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "merge_requests/8") {
 		t.Fatalf("pr: %d\n%s", code, out)
 	}
-	if got["title"] != "feat: feature/pay" || got["description"] != "## Summary\n- feat: add pay\n\n- [ ] tests" {
+	if got := rec.snapshot().Body; got["title"] != "feat: feature/pay" || got["description"] != "## Summary\n- feat: add pay\n\n- [ ] tests" {
 		t.Fatalf("request: %v", got)
 	}
 	if strings.Contains(out, "Title (Enter") || strings.Contains(out, "Body (Enter") {
@@ -770,11 +806,11 @@ func TestPRUsesDescriptionTemplate(t *testing.T) {
 	}
 
 	// flags still win for their field
-	got = nil
+	rec.reset()
 	if out, code = runEnv(t, dir, env, "", bin, "pr", "--yes", "--title", "Flag title"); code != 0 {
 		t.Fatalf("pr --title: %d\n%s", code, out)
 	}
-	if got["title"] != "Flag title" || !strings.Contains(got["description"].(string), "## Summary") {
+	if got := rec.snapshot().Body; got["title"] != "Flag title" || !strings.Contains(got["description"].(string), "## Summary") {
 		t.Fatalf("request: %v", got)
 	}
 
@@ -785,8 +821,8 @@ func TestPRUsesDescriptionTemplate(t *testing.T) {
 	if err := os.Symlink("/etc/hosts", filepath.Join(dir, "description.pr.md")); err != nil {
 		t.Skip("symlinks unavailable:", err)
 	}
-	got = nil
-	if out, code = runEnv(t, dir, env, "", bin, "pr", "--yes"); code != 3 || got != nil {
-		t.Fatalf("symlinked template: %d got=%v\n%s", code, got, out)
+	rec.reset()
+	if out, code = runEnv(t, dir, env, "", bin, "pr", "--yes"); code != 3 || rec.snapshot().Calls != 0 {
+		t.Fatalf("symlinked template: %d calls=%d\n%s", code, rec.snapshot().Calls, out)
 	}
 }
