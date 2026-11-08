@@ -87,6 +87,8 @@ hooks:
 // secretTemplate is secret.tide.yml. The token is a reference, never a value.
 // Detectors from the catalog are written commented out: enable one by deleting
 // the leading "# " of its two lines.
+//
+//nolint:gosec // G101 false positive: template text, not a credential
 const secretTemplate = `# Git Tide local settings. Never commit this file: "gtide init" adds it to .gitignore.
 # provider_token must reference an environment variable (or a key in .env); never paste the token itself.
 provider_token: ${%[1]s}

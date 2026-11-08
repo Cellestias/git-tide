@@ -17,7 +17,7 @@ import (
 
 // SecretFileName is the local, never-committed file at the repository root. It
 // holds the provider credentials reference and local secret-scanning patterns.
-const SecretFileName = "secret.tide.yml"
+const SecretFileName = "secret.tide.yml" //nolint:gosec // G101 false positive: not a credential
 
 // Local is the content of secret.tide.yml.
 type Local struct {
