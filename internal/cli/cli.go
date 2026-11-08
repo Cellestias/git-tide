@@ -40,7 +40,11 @@ func Execute(ctx context.Context, args []string, in io.Reader, out, errOut io.Wr
 		_, _ = fmt.Fprintln(errOut, "✗ cannot determine working directory:", err)
 		return apperr.CodeGeneral
 	}
-	e := &env{ex: executor.Exec{}, in: in, p: output.Printer{Out: out, Err: errOut}, dir: dir}
+	p := output.Printer{
+		Out: out, Err: errOut,
+		ColorOut: output.ColorEnabled(out, os.Getenv), ColorErr: output.ColorEnabled(errOut, os.Getenv),
+	}
+	e := &env{ex: executor.Exec{}, in: in, p: p, dir: dir}
 	return e.run(ctx, args, out, errOut)
 }
 
@@ -60,7 +64,7 @@ func (e *env) run(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	e.p.Fail("%s", err)
 	if h := apperr.HintOf(err); h != "" {
-		_, _ = fmt.Fprintf(errOut, "  hint: %s\n", h)
+		_, _ = fmt.Fprintf(errOut, "  %s\n", e.p.DimErr("hint: "+h))
 	}
 	return apperr.CodeOf(err)
 }
