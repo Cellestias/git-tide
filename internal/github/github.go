@@ -3,12 +3,9 @@
 package github
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cellestias/git-tide/internal/httpx"
 	"github.com/cellestias/git-tide/internal/provider"
 )
 
@@ -171,35 +169,24 @@ func (c *Client) pullsURL(repo Repo) string {
 // do performs a request and maps error statuses to errors that never contain
 // the token or the request URL.
 func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte) ([]byte, error) {
-	var rdr io.Reader
-	if payload != nil {
-		rdr = bytes.NewReader(payload)
+	hdr := map[string]string{
+		"Accept":               "application/vnd.github+json",
+		"X-GitHub-Api-Version": "2022-11-28",
+		"User-Agent":           "git-tide",
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, rdr)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "git-tide")
 	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+		hdr["Content-Type"] = "application/json"
 	}
 	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+		hdr["Authorization"] = "Bearer " + c.Token
 	}
-
-	resp, err := c.HTTP.Do(req)
+	resp, err := httpx.Do(ctx, c.HTTP, httpx.Request{Method: method, URL: endpoint, Payload: payload, Header: hdr}, httpx.DefaultPolicy)
 	if err != nil {
-		return nil, fmt.Errorf("request GitHub API: %w", redactURLErr(err))
+		return nil, fmt.Errorf("request GitHub API: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read GitHub API response: %w", err)
-	}
+	body := resp.Body
 
-	switch resp.StatusCode {
+	switch resp.Status {
 	case http.StatusOK, http.StatusCreated:
 		return body, nil
 	case http.StatusNotFound:
@@ -210,11 +197,11 @@ func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte
 		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
 			return nil, fmt.Errorf("GitHub API rate limit exceeded; set GITHUB_TOKEN or retry later")
 		}
-		return nil, fmt.Errorf("GitHub denied access (%d); check token permissions", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub denied access (%d); check token permissions", resp.Status)
 	case http.StatusUnprocessableEntity:
 		return nil, &ErrValidation{Message: validationMessage(body)}
 	default:
-		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitHub API returned status %d", resp.Status)
 	}
 }
 
@@ -307,45 +294,29 @@ const (
 // protected on GitHub. truncated reports that the list was capped.
 func (c *Client) ListProtectedBranches(ctx context.Context, repo Repo) (protected map[string]bool, truncated bool, err error) {
 	protected = map[string]bool{}
-	truncated, err = c.eachPage(ctx, c.repoURL(repo)+"/branches", func(raw json.RawMessage) error {
-		var items []struct {
+	truncated, err = c.eachItem(ctx, c.repoURL(repo)+"/branches", func(raw json.RawMessage) error {
+		var it struct {
 			Name      string `json:"name"`
 			Protected bool   `json:"protected"`
 		}
-		if err := json.Unmarshal(raw, &items); err != nil {
+		if err := json.Unmarshal(raw, &it); err != nil {
 			return err
 		}
-		for _, it := range items {
-			protected[it.Name] = it.Protected
-		}
+		protected[it.Name] = it.Protected
 		return nil
-	}, func(raw json.RawMessage) int {
-		var items []json.RawMessage
-		_ = json.Unmarshal(raw, &items)
-		return len(items)
 	})
 	return protected, truncated, err
 }
 
 // ListOpenPullRequests returns the open pull requests of repo.
 func (c *Client) ListOpenPullRequests(ctx context.Context, repo Repo) (prs []PullRequest, truncated bool, err error) {
-	truncated, err = c.eachPage(ctx, c.pullsURL(repo)+"?state=open", func(raw json.RawMessage) error {
-		var items []json.RawMessage
-		if err := json.Unmarshal(raw, &items); err != nil {
+	truncated, err = c.eachItem(ctx, c.pullsURL(repo)+"?state=open", func(raw json.RawMessage) error {
+		pr, err := decodePullRequest(raw)
+		if err != nil {
 			return err
 		}
-		for _, it := range items {
-			pr, err := decodePullRequest(it)
-			if err != nil {
-				return err
-			}
-			prs = append(prs, pr)
-		}
+		prs = append(prs, pr)
 		return nil
-	}, func(raw json.RawMessage) int {
-		var items []json.RawMessage
-		_ = json.Unmarshal(raw, &items)
-		return len(items)
 	})
 	return prs, truncated, err
 }
@@ -354,60 +325,26 @@ func (c *Client) repoURL(repo Repo) string {
 	return fmt.Sprintf("%s/repos/%s/%s", c.BaseURL, url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
 }
 
-// eachPage walks a paginated list endpoint. handle consumes one page; count
-// returns how many entries the page held, and a short page ends the walk.
-func (c *Client) eachPage(ctx context.Context, endpoint string, handle func(json.RawMessage) error, count func(json.RawMessage) int) (truncated bool, err error) {
-	sep := "?"
-	if strings.Contains(endpoint, "?") {
-		sep = "&"
-	}
-	for page := 1; page <= maxPages; page++ {
-		body, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s%sper_page=%d&page=%d", endpoint, sep, pageSize, page), nil)
-		if err != nil {
-			return false, err
-		}
-		if err := handle(body); err != nil {
-			if errors.Is(err, errStop) {
-				return false, nil
-			}
-			return false, fmt.Errorf("decode GitHub API response: %w", err)
-		}
-		if count(body) < pageSize {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-// redactURLErr drops the URL from *url.Error so it cannot leak into output.
-func redactURLErr(err error) error {
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		return ue.Err
-	}
-	return err
+// eachPage walks a paginated list endpoint; handle consumes one page.
+func (c *Client) eachPage(ctx context.Context, endpoint string, handle func([]json.RawMessage) error) (truncated bool, err error) {
+	return httpx.Pager{
+		Get:   func(ctx context.Context, u string) ([]byte, error) { return c.do(ctx, http.MethodGet, u, nil) },
+		Label: "GitHub", PageSize: pageSize, MaxPages: maxPages,
+	}.Each(ctx, endpoint, handle)
 }
 
 // errStop ends a paginated walk early; it is not an error for the caller.
-var errStop = errors.New("stop")
+var errStop = httpx.ErrStop
 
 // eachItem walks a list endpoint and calls fn for every element of every page.
 func (c *Client) eachItem(ctx context.Context, endpoint string, fn func(json.RawMessage) error) (truncated bool, err error) {
-	return c.eachPage(ctx, endpoint, func(raw json.RawMessage) error {
-		var items []json.RawMessage
-		if err := json.Unmarshal(raw, &items); err != nil {
-			return err
-		}
+	return c.eachPage(ctx, endpoint, func(items []json.RawMessage) error {
 		for _, it := range items {
 			if err := fn(it); err != nil {
 				return err
 			}
 		}
 		return nil
-	}, func(raw json.RawMessage) int {
-		var items []json.RawMessage
-		_ = json.Unmarshal(raw, &items)
-		return len(items)
 	})
 }
 

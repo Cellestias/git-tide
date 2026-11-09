@@ -4,12 +4,10 @@
 package gitlab
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cellestias/git-tide/internal/httpx"
 	"github.com/cellestias/git-tide/internal/provider"
 )
 
@@ -241,63 +240,29 @@ func (c *Client) ListProtectedBranches(ctx context.Context, repo Repo) (protecte
 }
 
 func (c *Client) eachPage(ctx context.Context, endpoint string, handle func([]json.RawMessage) error) (truncated bool, err error) {
-	sep := "?"
-	if strings.Contains(endpoint, "?") {
-		sep = "&"
-	}
-	for page := 1; page <= maxPages; page++ {
-		body, err := c.do(ctx, http.MethodGet, fmt.Sprintf("%s%sper_page=%d&page=%d", endpoint, sep, pageSize, page), nil)
-		if err != nil {
-			return false, err
-		}
-		var items []json.RawMessage
-		if err := json.Unmarshal(body, &items); err != nil {
-			return false, fmt.Errorf("decode GitLab API response: %w", err)
-		}
-		if err := handle(items); err != nil {
-			if errors.Is(err, errStop) {
-				return false, nil
-			}
-			return false, fmt.Errorf("decode GitLab API response: %w", err)
-		}
-		if len(items) < pageSize {
-			return false, nil
-		}
-	}
-	return true, nil
+	return httpx.Pager{
+		Get:   func(ctx context.Context, u string) ([]byte, error) { return c.do(ctx, http.MethodGet, u, nil) },
+		Label: "GitLab", PageSize: pageSize, MaxPages: maxPages,
+	}.Each(ctx, endpoint, handle)
 }
 
 // do performs a request and maps error statuses to errors that never contain
 // the token or the request URL.
 func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte) ([]byte, error) {
-	var rdr io.Reader
+	hdr := map[string]string{"Accept": "application/json", "User-Agent": "git-tide"}
 	if payload != nil {
-		rdr = bytes.NewReader(payload)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, rdr)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "git-tide")
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+		hdr["Content-Type"] = "application/json"
 	}
 	if c.Token != "" {
-		req.Header.Set("PRIVATE-TOKEN", c.Token)
+		hdr["PRIVATE-TOKEN"] = c.Token
 	}
-
-	resp, err := c.HTTP.Do(req)
+	resp, err := httpx.Do(ctx, c.HTTP, httpx.Request{Method: method, URL: endpoint, Payload: payload, Header: hdr}, httpx.DefaultPolicy)
 	if err != nil {
-		return nil, fmt.Errorf("request GitLab API: %w", redactURLErr(err))
+		return nil, fmt.Errorf("request GitLab API: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read GitLab API response: %w", err)
-	}
+	body := resp.Body
 
-	switch resp.StatusCode {
+	switch resp.Status {
 	case http.StatusOK, http.StatusCreated:
 		return body, nil
 	case http.StatusNotFound:
@@ -311,7 +276,7 @@ func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte
 	case http.StatusConflict, http.StatusUnprocessableEntity, http.StatusBadRequest:
 		return nil, &ErrValidation{Message: validationMessage(body)}
 	default:
-		return nil, fmt.Errorf("GitLab API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("GitLab API returned status %d", resp.Status)
 	}
 }
 
@@ -412,16 +377,8 @@ func normalizeState(s string) string {
 	return s
 }
 
-func redactURLErr(err error) error {
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		return ue.Err
-	}
-	return err
-}
-
 // errStop ends a paginated walk early; it is not an error for the caller.
-var errStop = errors.New("stop")
+var errStop = httpx.ErrStop
 
 // ListPullRequests lists merge requests newest first, filtered by opts.
 func (c *Client) ListPullRequests(ctx context.Context, repo Repo, opts ListOptions) (prs []PullRequest, truncated bool, err error) {
