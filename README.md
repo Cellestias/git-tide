@@ -344,6 +344,45 @@ Before anything is committed, Tide checks that the branch is not protected, that
 
 `gtide save` without `-f` is like `git add --all`: modified, deleted, and new files that `.gitignore` does not exclude. Tide lists what it staged before committing, and the secret scan covers new files too. With `-f` it refuses when other files are already staged, so the commit holds exactly the files you named. If a check fails after staging, Tide restores the index and nothing stays staged. It also refuses during a merge or rebase, where plain `git commit` is the right tool.
 
+### `gtide history`
+
+Lists commits, newest first: hash, date, author and message. Without flags it shows the current branch, and only what the branch adds to its base (from `.tide.yml`, or `--base`), so inherited history does not drown the list. Merge commits are hidden unless you ask for them. Creating a commit is `gtide commit` or `gtide save`; `history` never changes the repository.
+
+```bash
+gtide history --me                                       # your commits on this branch
+gtide history --branch feat/remember-login --member paulo
+gtide history --remote                                   # the remote copy of the branch (fetches it first)
+gtide history -f src/utils/rotation_keys.py              # who changed a file, following renames
+gtide history --type fix --scope auth --since 2w
+gtide history --search "login"
+gtide history v1.3.2..v1.4.0                             # what a release added
+gtide history --summary --since 1m                       # commits per author
+gtide history show 1a2b3c4                               # one commit, with the files it changed
+```
+
+| Flag | Effect |
+|---|---|
+| `--me` | Only commits made with your `git config user.email`. |
+| `-M, --member` | Only commits whose author name or email contains the text (case-insensitive). Not combinable with `--me`. |
+| `-b, --branch` | Another branch: local, or remote-tracking when it only exists on the remote. |
+| `--remote` | Read the remote copy of the branch; fetches that branch first. |
+| `-f, --file` | Only commits that touched this file or directory. Reads the whole history, not just what the branch adds. |
+| `-s, --search` | Only commits whose message contains the text (plain text, case-insensitive). |
+| `--type`, `--scope` | Only Conventional Commits of that type (`feat`, `fix`...) or scope (`auth`...). They read the subject's prefix, so `feat(auth)!:` counts as `feat`. |
+| `<from>..<to>` | Commits in `<to>` that `<from>` does not have. Branches, tags or hashes. Not combinable with `--branch`, `--remote`, `--all` or `--base`. |
+| `--since`, `--until` | `7d`, `2w`, `3m`, `12h`, or a date such as `2026-01-31`. |
+| `--all`, `--base` | `--all` shows the whole history; `--base` picks the base to subtract. |
+| `--merges` | Include merge commits. |
+| `-n, --limit` | At most this many commits (default 30; `0` for all). With `--type`/`--scope` it counts after the filter. |
+| `--summary` | Count commits per author instead of listing them. Ignores `--limit`. |
+| `--json` | Print JSON on stdout; each commit has a `files` array with the added and deleted lines. |
+
+`gtide history --compare <from> <to>` shows how far `<from>` is ahead of and behind `<to>`, and whether each commit `<from>` has would cherry-pick cleanly onto `<to>`. Commits are tried oldest first, each on top of the ones that applied; the simulation runs in memory and changes nothing. It needs Git 2.40 or later, exits with code `6` when a commit conflicts, and does not combine with the filters above.
+
+```bash
+gtide history --compare feat/sign-in feat/staging
+```
+
 ### `gtide push`
 
 Pushes the current branch to the configured remote under the same name and sets it as upstream.
@@ -608,7 +647,7 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 - **Secrets stay out of output.** Tide never prints matched values, tokens, or credentials embedded in remote URLs.
 - **Tokens.** Tide reads the provider token from the environment or `.env` (see [Authentication](#authentication)) and never stores it. `secret.tide.yml` only references a variable, and a literal token there is rejected. Do not put tokens in `.tide.yml`.
 - **Repository configuration is untrusted input.** Tide bounds file size and pattern count, uses Go's RE2 regular expressions (no catastrophic backtracking), and validates branch names before passing them to Git. Git is always run with an argument list, never through a shell.
-- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API; `pr list`, `pr view` and `pr status` only call the API) touch the network, and each says so as it runs.
+- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API), `history` (`--remote` fetches), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API; `pr list`, `pr view` and `pr status` only call the API) touch the network, and each says so as it runs.
 - **GitHub and GitLab.** `review`, `pr` and `branch --hosted` support `github.com` and GitLab (gitlab.com or self-hosted). `TIDE_GITHUB_API_URL` and `TIDE_GITLAB_API_URL` point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing. GitHub Enterprise is not supported yet.
 - No telemetry.
 
