@@ -58,7 +58,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		return apperr.New(apperr.CodePolicy, "invalid commit message: "+err.Error(), "example: "+rules.Example())
 	}
 
-	paths, err := resolvePaths(repo.Root, opts.Cwd, opts.Files)
+	paths, err := ResolvePaths(repo.Root, opts.Cwd, opts.Files)
 	if err != nil {
 		return err
 	}
@@ -148,9 +148,9 @@ func BuildMessage(typ, scope, message string) (string, error) {
 	return fmt.Sprintf("%s: %s", typ, message), nil
 }
 
-// resolvePaths turns user paths (relative to cwd) into literal paths relative
+// ResolvePaths turns user paths (relative to cwd) into literal paths relative
 // to the repository root, rejecting anything outside it.
-func resolvePaths(root, cwd string, files []string) ([]string, error) {
+func ResolvePaths(root, cwd string, files []string) ([]string, error) {
 	if len(files) == 0 {
 		return nil, nil
 	}
