@@ -25,6 +25,7 @@ type LogQuery struct {
 	Rev     string
 	Exclude string // a ref whose commits are left out (base scoping); "" for none
 	Author  string // matched as a case-insensitive plain substring of "Name <email>"
+	Search  string // matched as a case-insensitive plain substring of the message
 	Path    string // relative to the repository root
 	Follow  bool   // follow renames of Path; Git supports it for a single file only
 	Since   string // Git date, e.g. "2 weeks ago" or "2026-01-31"; "" for none
@@ -43,8 +44,14 @@ func (r *Repository) Log(ctx context.Context, q LogQuery) ([]LogEntry, error) {
 	if q.Limit > 0 {
 		args = append(args, "-n", strconv.Itoa(q.Limit))
 	}
+	if q.Author != "" || q.Search != "" {
+		args = append(args, "--fixed-strings", "--regexp-ignore-case")
+	}
 	if q.Author != "" {
-		args = append(args, "--fixed-strings", "--regexp-ignore-case", "--author="+q.Author)
+		args = append(args, "--author="+q.Author)
+	}
+	if q.Search != "" {
+		args = append(args, "--grep="+q.Search)
 	}
 	if q.Since != "" {
 		args = append(args, "--since="+q.Since)

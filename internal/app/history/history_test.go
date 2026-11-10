@@ -327,3 +327,87 @@ func TestNoMatchIsNotAnError(t *testing.T) {
 		t.Fatalf("err=%v\n%s", err, out)
 	}
 }
+
+func TestSearchMatchesTheMessage(t *testing.T) {
+	repo, dir := setup(t)
+	out, err := run(repo, dir, Options{Search: "THEIRS"}) // case-insensitive
+	if err != nil || !strings.Contains(out, "fix: theirs") || strings.Contains(out, "feat: mine") {
+		t.Fatalf("--search:\n%s", out)
+	}
+	if out, err = run(repo, dir, Options{Search: "fix."}); err != nil || !strings.Contains(out, "No commits match") {
+		t.Fatalf("the text is literal, not a regex:\n%s", out) // "fix." must not match "fix:"
+	}
+}
+
+func TestTypeAndScopeReadTheConventionalPrefix(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.WriteFile(t, dir, "a.txt", "a\n")
+	testutil.Commit(t, dir, "fix(auth)!: reject expired tokens")
+	testutil.WriteFile(t, dir, "b.txt", "b\n")
+	testutil.Commit(t, dir, "feat(auth): add login")
+	testutil.WriteFile(t, dir, "c.txt", "c\n")
+	testutil.Commit(t, dir, "chore: bump deps\n\nfix: only in the body")
+
+	out, err := run(repo, dir, Options{Type: "fix"})
+	if err != nil || !strings.Contains(out, "reject expired") || !strings.Contains(out, "fix: theirs") ||
+		strings.Contains(out, "add login") || strings.Contains(out, "bump deps") {
+		t.Fatalf("--type fix:\n%s", out)
+	}
+	out, err = run(repo, dir, Options{Type: "FIX", Scope: "auth"})
+	if err != nil || strings.Count(out, "\n") != 2 || !strings.Contains(out, "reject expired") {
+		t.Fatalf("--type fix --scope auth:\n%s", out)
+	}
+	if out, err = run(repo, dir, Options{Scope: "auth", Limit: 1}); err != nil || !strings.Contains(out, "add login") || strings.Contains(out, "reject expired") {
+		t.Fatalf("--limit applies after the filter:\n%s", out)
+	}
+	if _, err := run(repo, dir, Options{Type: "fe at"}); apperr.CodeOf(err) != apperr.CodeUsage {
+		t.Errorf("bad --type: err = %v", err)
+	}
+}
+
+func TestRangeListsWhatTheEndHasAndTheStartDoesNot(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.Run(t, dir, "tag", "v1", "HEAD~1")
+	testutil.Run(t, dir, "tag", "v2", "HEAD")
+	out, err := run(repo, dir, Options{Range: "v1..v2"})
+	if err != nil || !strings.Contains(out, "fix: theirs") || strings.Contains(out, "feat: mine") {
+		t.Fatalf("v1..v2:\n%s", out)
+	}
+	for _, bad := range []string{"v1", "v1..", "..v2", "-x..v2", "v1...v2", "v1..nope"} {
+		if _, err := run(repo, dir, Options{Range: bad}); apperr.CodeOf(err) != apperr.CodeUsage {
+			t.Errorf("range %q: err = %v", bad, err)
+		}
+	}
+	if _, err := run(repo, dir, Options{Range: "v1..v2", Branch: "main"}); apperr.CodeOf(err) != apperr.CodeUsage {
+		t.Errorf("range with --branch: err = %v", err)
+	}
+}
+
+func TestSummaryCountsPerAuthor(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.WriteFile(t, dir, "x.txt", "x\n")
+	testutil.Run(t, dir, "add", "-A")
+	testutil.Run(t, dir, "commit", "-q", "--author="+paulo, "-m", "fix: more")
+
+	out, err := run(repo, dir, Options{Summary: true, Limit: 1}) // --limit is ignored
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 3 || !strings.Contains(lines[1], "Paulo Silva") || !strings.HasPrefix(strings.TrimSpace(lines[1]), "2") || !strings.Contains(lines[2], "Git Tide Test") {
+		t.Fatalf("--summary:\n%s", out)
+	}
+	out, err = run(repo, dir, Options{Summary: true, JSON: true})
+	var got []map[string]any
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got) != 2 || got[0]["commits"] != float64(2) || got[0]["email"] != "paulo@example.com" {
+		t.Fatalf("--summary --json: err=%v\n%s", err, out)
+	}
+}
+
+func TestCompareRejectsTheNewFilters(t *testing.T) {
+	for _, o := range []Options{{Search: "x"}, {Type: "feat"}, {Scope: "a"}, {Summary: true}} {
+		if len(incompatible(o)) != 1 {
+			t.Errorf("%+v is not rejected by --compare", o)
+		}
+	}
+}

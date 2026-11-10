@@ -40,6 +40,35 @@ type Options struct {
 	Since  string // "7d", "2w", "3m", "12h" or any date Git understands
 	Until  string
 	JSON   bool // print JSON on stdout instead of a table
+
+	Search  string // only commits whose message contains this text
+	Type    string // only Conventional Commits of this type ("feat", "fix"...)
+	Scope   string // only Conventional Commits of this scope ("auth"...)
+	Range   string // "from..to": the commits in to that are not in from
+	Summary bool   // count commits per author instead of listing them; ignores Limit
+}
+
+// conventional reads "type(scope)!: description" from a commit subject.
+var conventional = regexp.MustCompile(`^([A-Za-z]+)(?:\(([^)]*)\))?!?:`)
+
+// matchesKind reports whether subject is a Conventional Commit of the wanted
+// type and scope; an empty wish matches anything.
+func matchesKind(subject, typ, scope string) bool {
+	m := conventional.FindStringSubmatch(subject)
+	if m == nil {
+		return false
+	}
+	return (typ == "" || strings.EqualFold(m[1], typ)) && (scope == "" || strings.EqualFold(m[2], scope))
+}
+
+// parseRange splits "from..to"; both sides must be given.
+func parseRange(r string) (from, to string, err error) {
+	from, to, ok := strings.Cut(strings.TrimSpace(r), "..")
+	if !ok || from == "" || to == "" || strings.HasPrefix(to, ".") || strings.ContainsAny(from+to, " \t") ||
+		strings.HasPrefix(from, "-") || strings.HasPrefix(to, "-") {
+		return "", "", apperr.Usage("invalid range %q; use <from>..<to>, e.g. v1.3.1..v1.3.2", r)
+	}
+	return from, to, nil
 }
 
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, opts Options, p output.Printer) error {
@@ -49,8 +78,22 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	if opts.Limit < 0 {
 		return apperr.Usage("--limit must not be negative")
 	}
+	if err := checkKind("--type", opts.Type); err != nil {
+		return err
+	}
+	if opts.Scope != "" && strings.TrimSpace(opts.Scope) == "" {
+		return apperr.Usage("--scope needs a scope")
+	}
+	if opts.Range != "" && (opts.Branch != "" || opts.Remote || opts.All || opts.Base != "") {
+		return apperr.Usage("a range cannot be combined with --branch, --remote, --all or --base")
+	}
+	opts.Search, opts.Scope = strings.TrimSpace(opts.Search), strings.TrimSpace(opts.Scope)
 
-	q := repository.LogQuery{Limit: opts.Limit}
+	q := repository.LogQuery{Limit: opts.Limit, Search: opts.Search}
+	kind := opts.Type != "" || opts.Scope != ""
+	if kind || opts.Summary {
+		q.Limit = 0 // the filter runs here, so the limit is applied after it
+	}
 	switch {
 	case opts.Me:
 		email := repo.UserEmail(ctx)
@@ -83,20 +126,31 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		return err
 	}
 
-	name, err := branchName(ctx, repo, opts.Branch)
-	if err != nil {
-		return err
+	var name, label string
+	if opts.Range != "" {
+		from, to, err := parseRange(opts.Range)
+		if err != nil {
+			return err
+		}
+		for _, ref := range []string{from, to} {
+			if ok, err := repo.CommitExists(ctx, ref); err != nil || !ok {
+				return apperr.New(apperr.CodeUsage, fmt.Sprintf("%q is not a commit, branch or tag", ref), "")
+			}
+		}
+		q.Rev, q.Exclude, label = to, from, opts.Range
+	} else {
+		if name, err = branchName(ctx, repo, opts.Branch); err != nil {
+			return err
+		}
+		if q.Rev, label, err = resolveRev(ctx, repo, cfg.Remote, name, opts.Remote, p); err != nil {
+			return err
+		}
 	}
-	rev, label, err := resolveRev(ctx, repo, cfg.Remote, name, opts.Remote, p)
-	if err != nil {
-		return err
-	}
-	q.Rev = rev
 
 	// A file's history and --all read everything; otherwise only what the
 	// branch adds to its base, so inherited history does not drown the list.
 	scope := ""
-	if !opts.All && q.Path == "" {
+	if !opts.All && q.Path == "" && opts.Range == "" {
 		base, ref, err := baseRef(ctx, repo, cfg, name, opts.Base)
 		if err != nil {
 			return err
@@ -109,10 +163,25 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		}
 	}
 
-	q.Files = opts.JSON
+	q.Files = opts.JSON && !opts.Summary
 	entries, err := repo.Log(ctx, q)
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot read the commit history", "", err)
+	}
+	if kind {
+		kept := entries[:0]
+		for _, e := range entries {
+			if matchesKind(e.Subject, opts.Type, opts.Scope) {
+				kept = append(kept, e)
+			}
+		}
+		entries = kept
+	}
+	if opts.Limit > 0 && !opts.Summary && len(entries) > opts.Limit {
+		entries = entries[:opts.Limit]
+	}
+	if opts.Summary {
+		return summarize(p, entries, label, describe(q, opts, scope), opts.JSON)
 	}
 	if opts.JSON {
 		return writeJSON(p, entries)
@@ -209,6 +278,15 @@ func describe(q repository.LogQuery, opts Options, scope string) string {
 	}
 	if q.Path != "" {
 		parts = append(parts, "touching "+q.Path)
+	}
+	if opts.Search != "" {
+		parts = append(parts, fmt.Sprintf("matching %q", opts.Search))
+	}
+	if opts.Type != "" {
+		parts = append(parts, "type "+opts.Type)
+	}
+	if opts.Scope != "" {
+		parts = append(parts, "scope "+opts.Scope)
 	}
 	if scope != "" {
 		parts = append(parts, "not in "+scope)
@@ -311,6 +389,19 @@ func encode(p output.Printer, v any) error {
 	enc.SetIndent("", "  ")
 	if err := enc.Encode(v); err != nil {
 		return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", err)
+	}
+	return nil
+}
+
+// checkKind rejects a --type that cannot be a Conventional Commit type.
+func checkKind(flag, v string) error {
+	if v == "" {
+		return nil
+	}
+	for _, r := range v {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
+			return apperr.Usage("%s %q is not a commit type; use letters only, e.g. feat or fix", flag, v)
+		}
 	}
 	return nil
 }
