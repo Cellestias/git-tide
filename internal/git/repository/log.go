@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// LogEntry is one commit as shown by `gtide commit`.
+// LogEntry is one commit as shown by `gtide history`.
 type LogEntry struct {
 	FullHash    string
 	Hash        string // abbreviated

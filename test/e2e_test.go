@@ -453,6 +453,15 @@ func TestSaveAndCommitEndToEnd(t *testing.T) {
 	if out, code := gtide(t, dir, "commit", "-a", "-m", "fix: change a"); code != 0 {
 		t.Fatalf("commit -a: %d\n%s", code, out)
 	}
+
+	out, code = gtide(t, dir, "history", "-f", "a.txt")
+	if code != 0 || !strings.Contains(out, "fix: change a") || !strings.Contains(out, "feat(a): add a") {
+		t.Fatalf("history -f: %d\n%s", code, out)
+	}
+	testutil.Run(t, dir, "config", "user.email", "t@example.invalid") // the identity gtide commits with here
+	if out, code := gtide(t, dir, "history", "--me", "-n", "1"); code != 0 || !strings.Contains(out, "fix: change a") || strings.Contains(out, "add b") {
+		t.Fatalf("history --me -n 1: %d\n%s", code, out)
+	}
 }
 
 func TestContinueAndAbortEndToEnd(t *testing.T) {

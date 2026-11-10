@@ -1,4 +1,4 @@
-// Package history implements `gtide commit`: a table of the commits of a
+// Package history implements `gtide history`: a table of the commits of a
 // branch, filtered by who wrote them or by the file they touched.
 package history
 

@@ -10,6 +10,7 @@ import (
 	appcommit "github.com/cellestias/git-tide/internal/app/commit"
 	"github.com/cellestias/git-tide/internal/app/create"
 	"github.com/cellestias/git-tide/internal/app/doctor"
+	"github.com/cellestias/git-tide/internal/app/history"
 	apphooks "github.com/cellestias/git-tide/internal/app/hooks"
 	"github.com/cellestias/git-tide/internal/app/initrepo"
 	"github.com/cellestias/git-tide/internal/app/pr"
@@ -297,6 +298,89 @@ func (e *env) commitCmd() *cobra.Command {
 	}
 	messageFlags(cmd, &opts)
 	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "stage modifications and deletions of tracked files first")
+	return cmd
+}
+
+func (e *env) historyCmd() *cobra.Command {
+	var (
+		opts    history.Options
+		compare bool
+	)
+	cmd := &cobra.Command{
+		Use:   "history [--compare <from> <to>]",
+		Short: "List the commits of a branch, by author or by file",
+		Long: "List commits, newest first: hash, date, author and message. Without flags it shows the current branch.\n" +
+			"--me keeps the commits made with your git user.email; --member keeps those whose author name or email contains the text.\n" +
+			"--branch reads another branch (local, or remote-tracking when it only exists on the remote); --remote reads the remote copy\n" +
+			"of the branch and fetches it first. -f shows the commits that touched a file, following renames, with who made each one.\n" +
+			"A branch shows only what it adds to its base (from .tide.yml, or --base); --all shows the whole history, and so does -f.\n" +
+			"Merge commits are hidden unless --merges. --since and --until take 7d, 2w, 3m, 12h or a date (2026-01-31). --json prints JSON.\n" +
+			"`gtide history show <commit>` shows one commit with the files it changed.\n" +
+			"--compare <from> <to> shows how far <from> is ahead of and behind <to>, and whether each commit <from> has would\n" +
+			"cherry-pick cleanly onto <to> (tried oldest first, each on top of the ones that applied; nothing is changed). It needs\n" +
+			"Git 2.40 or later and exits with code 6 when a commit conflicts.\n" +
+			"To create a commit, use `gtide commit` or `gtide save`.",
+		Example: "  gtide history --me\n" +
+			"  gtide history --branch feat/remember-login --member paulo\n" +
+			"  gtide history --remote\n" +
+			"  gtide history -f src/utils/rotation_keys.py\n" +
+			"  gtide history --me --since 7d       # what you did this week\n" +
+			"  gtide history --all --merges        # the full history, merges included\n" +
+			"  gtide history show 1a2b3c4\n" +
+			"  gtide history --compare feat/sign-in feat/staging",
+		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			switch {
+			case compare && len(args) != 2:
+				return apperr.Usage("--compare needs two branches: gtide history --compare <from> <to>")
+			case !compare && len(args) > 0:
+				return apperr.Usage("unexpected argument %q; see `gtide history --help`", args[0])
+			}
+			repo, cfg, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			opts.Cwd = e.dir
+			if compare {
+				return history.Compare(cmd.Context(), repo, cfg, args[0], args[1], opts, e.p)
+			}
+			return history.Run(cmd.Context(), repo, cfg, opts, e.p)
+		},
+	}
+	f := cmd.Flags()
+	f.BoolVar(&opts.Me, "me", false, "only commits made with your git user.email")
+	f.StringVarP(&opts.Member, "member", "M", "", "only commits whose author name or email contains `text`")
+	f.StringVarP(&opts.Branch, "branch", "b", "", "branch to read (default: the current branch)")
+	f.BoolVar(&opts.Remote, "remote", false, "read the remote copy of the branch (fetches it first)")
+	f.StringVarP(&opts.File, "file", "f", "", "only commits that touched this `file`")
+	f.IntVarP(&opts.Limit, "limit", "n", history.DefaultLimit, "maximum number of commits (0 for all)")
+	f.BoolVar(&opts.All, "all", false, "the whole history, not only what the branch adds to its base")
+	f.StringVar(&opts.Base, "base", "", "base branch to subtract (default: resolved from .tide.yml)")
+	f.BoolVar(&opts.Merges, "merges", false, "include merge commits")
+	f.StringVar(&opts.Since, "since", "", "only commits after `when` (7d, 2w, 3m, 12h or a date)")
+	f.StringVar(&opts.Until, "until", "", "only commits before `when`")
+	f.BoolVar(&opts.JSON, "json", false, "print JSON on stdout")
+	f.BoolVar(&compare, "compare", false, "compare two branches: `gtide history --compare <from> <to>`")
+	cmd.AddCommand(e.historyShowCmd())
+	return cmd
+}
+
+func (e *env) historyShowCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:     "show <commit>",
+		Short:   "Show one commit: author, message and the files it changed",
+		Example: "  gtide history show 1a2b3c4\n  gtide history show 1a2b3c4 --json",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, _, err := e.requireConfig(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return history.Show(cmd.Context(), repo, args[0], asJSON, e.p)
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON on stdout")
 	return cmd
 }
 
