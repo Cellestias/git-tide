@@ -55,17 +55,17 @@ Options are environment variables: `GTIDE_VERSION=v1.1.0` to pick a release, `GT
 
 ### Download a release
 
-The links below are for **v1.3.2**, the current release. Older and newer versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases). Archive names are `gtide_<version>_<os>_<arch>`; verify a download against `checksums.txt` from the same release.
+The links below are for **v1.4.0**, the current release. Older and newer versions are on the [Releases page](https://github.com/Cellestias/git-tide/releases). Archive names are `gtide_<version>_<os>_<arch>`; verify a download against `checksums.txt` from the same release.
 
 | System | Download |
 |---|---|
-| macOS, Apple Silicon (M1 and newer) | [gtide_v1.3.2_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.3.2/gtide_v1.3.2_darwin_arm64.tar.gz) |
-| macOS, Intel | [gtide_v1.3.2_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.3.2/gtide_v1.3.2_darwin_amd64.tar.gz) |
-| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [gtide_v1.3.2_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.3.2/gtide_v1.3.2_linux_amd64.tar.gz) |
-| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [gtide_v1.3.2_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.3.2/gtide_v1.3.2_linux_arm64.tar.gz) |
-| Windows, x86-64 | [gtide_v1.3.2_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.3.2/gtide_v1.3.2_windows_amd64.zip) |
-| Windows, ARM64 | [gtide_v1.3.2_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.3.2/gtide_v1.3.2_windows_arm64.zip) |
-| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/download/v1.3.2/checksums.txt) |
+| macOS, Apple Silicon (M1 and newer) | [gtide_v1.4.0_darwin_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.4.0/gtide_v1.4.0_darwin_arm64.tar.gz) |
+| macOS, Intel | [gtide_v1.4.0_darwin_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.4.0/gtide_v1.4.0_darwin_amd64.tar.gz) |
+| Linux (Ubuntu, Debian, Fedora, ...), x86-64 | [gtide_v1.4.0_linux_amd64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.4.0/gtide_v1.4.0_linux_amd64.tar.gz) |
+| Linux, ARM64 (Raspberry Pi 4/5, AWS Graviton) | [gtide_v1.4.0_linux_arm64.tar.gz](https://github.com/Cellestias/git-tide/releases/download/v1.4.0/gtide_v1.4.0_linux_arm64.tar.gz) |
+| Windows, x86-64 | [gtide_v1.4.0_windows_amd64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.4.0/gtide_v1.4.0_windows_amd64.zip) |
+| Windows, ARM64 | [gtide_v1.4.0_windows_arm64.zip](https://github.com/Cellestias/git-tide/releases/download/v1.4.0/gtide_v1.4.0_windows_arm64.zip) |
+| Checksums for all of the above | [checksums.txt](https://github.com/Cellestias/git-tide/releases/download/v1.4.0/checksums.txt) |
 
 **macOS and Linux**
 
@@ -96,7 +96,7 @@ Set `$version` to the latest tag shown on the Releases page, and use `arm64` ins
 
 ```powershell
 $repo = "https://github.com/Cellestias/git-tide"
-$version = "v1.3.2"
+$version = "v1.4.0"
 $name = "gtide_${version}_windows_amd64"
 
 Invoke-WebRequest "$repo/releases/download/$version/$name.zip" -OutFile "$name.zip"
@@ -343,6 +343,45 @@ gtide save -m "docs: update readme" -f docs/                # a directory stages
 Before anything is committed, Tide checks that the branch is not protected, that the message follows your Conventional Commits rules, and that the staged lines hold no likely secrets (the same checks as the hooks, with friendlier errors). Your Git hooks still run, and Tide never uses `--no-verify`.
 
 `gtide save` without `-f` is like `git add --all`: modified, deleted, and new files that `.gitignore` does not exclude. Tide lists what it staged before committing, and the secret scan covers new files too. With `-f` it refuses when other files are already staged, so the commit holds exactly the files you named. If a check fails after staging, Tide restores the index and nothing stays staged. It also refuses during a merge or rebase, where plain `git commit` is the right tool.
+
+### `gtide history`
+
+Lists commits, newest first: hash, date, author and message. Without flags it shows the current branch, and only what the branch adds to its base (from `.tide.yml`, or `--base`), so inherited history does not drown the list. Merge commits are hidden unless you ask for them. Creating a commit is `gtide commit` or `gtide save`; `history` never changes the repository.
+
+```bash
+gtide history --me                                       # your commits on this branch
+gtide history --branch feat/remember-login --member paulo
+gtide history --remote                                   # the remote copy of the branch (fetches it first)
+gtide history -f src/utils/rotation_keys.py              # who changed a file, following renames
+gtide history --type fix --scope auth --since 2w
+gtide history --search "login"
+gtide history v1.3.2..v1.4.0                             # what a release added
+gtide history --summary --since 1m                       # commits per author
+gtide history show 1a2b3c4                               # one commit, with the files it changed
+```
+
+| Flag | Effect |
+|---|---|
+| `--me` | Only commits made with your `git config user.email`. |
+| `-M, --member` | Only commits whose author name or email contains the text (case-insensitive). Not combinable with `--me`. |
+| `-b, --branch` | Another branch: local, or remote-tracking when it only exists on the remote. |
+| `--remote` | Read the remote copy of the branch; fetches that branch first. |
+| `-f, --file` | Only commits that touched this file or directory. Reads the whole history, not just what the branch adds. |
+| `-s, --search` | Only commits whose message contains the text (plain text, case-insensitive). |
+| `--type`, `--scope` | Only Conventional Commits of that type (`feat`, `fix`...) or scope (`auth`...). They read the subject's prefix, so `feat(auth)!:` counts as `feat`. |
+| `<from>..<to>` | Commits in `<to>` that `<from>` does not have. Branches, tags or hashes. Not combinable with `--branch`, `--remote`, `--all` or `--base`. |
+| `--since`, `--until` | `7d`, `2w`, `3m`, `12h`, or a date such as `2026-01-31`. |
+| `--all`, `--base` | `--all` shows the whole history; `--base` picks the base to subtract. |
+| `--merges` | Include merge commits. |
+| `-n, --limit` | At most this many commits (default 30; `0` for all). With `--type`/`--scope` it counts after the filter. |
+| `--summary` | Count commits per author instead of listing them. Ignores `--limit`. |
+| `--json` | Print JSON on stdout; each commit has a `files` array with the added and deleted lines. |
+
+`gtide history --compare <from> <to>` shows how far `<from>` is ahead of and behind `<to>`, and whether each commit `<from>` has would cherry-pick cleanly onto `<to>`. Commits are tried oldest first, each on top of the ones that applied; the simulation runs in memory and changes nothing. It needs Git 2.40 or later, exits with code `6` when a commit conflicts, and does not combine with the filters above.
+
+```bash
+gtide history --compare feat/sign-in feat/staging
+```
 
 ### `gtide push`
 
@@ -608,7 +647,7 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 - **Secrets stay out of output.** Tide never prints matched values, tokens, or credentials embedded in remote URLs.
 - **Tokens.** Tide reads the provider token from the environment or `.env` (see [Authentication](#authentication)) and never stores it. `secret.tide.yml` only references a variable, and a literal token there is rejected. Do not put tokens in `.tide.yml`.
 - **Repository configuration is untrusted input.** Tide bounds file size and pattern count, uses Go's RE2 regular expressions (no catastrophic backtracking), and validates branch names before passing them to Git. Git is always run with an argument list, never through a shell.
-- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API; `pr list`, `pr view` and `pr status` only call the API) touch the network, and each says so as it runs.
+- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API), `history` (`--remote` fetches), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API; `pr list`, `pr view` and `pr status` only call the API) touch the network, and each says so as it runs.
 - **GitHub and GitLab.** `review`, `pr` and `branch --hosted` support `github.com` and GitLab (gitlab.com or self-hosted). `TIDE_GITHUB_API_URL` and `TIDE_GITLAB_API_URL` point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing. GitHub Enterprise is not supported yet.
 - No telemetry.
 
