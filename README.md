@@ -128,18 +128,37 @@ The binary must be on the `PATH` seen by Git, because the installed hooks call `
 
 ## Quick start
 
+An existing repository:
+
 ```bash
 cd your-repo
 gtide init        # creates .tide.yml and installs the Git hooks
 gtide doctor      # checks that everything is set up
 ```
 
+A new project, from an empty folder:
+
+```bash
+mkdir app && cd app
+gtide init --remote git@github.com:me/app.git   # asks to create the repository, registers the remote
+gtide save -m "chore: initial commit"            # the first commit is allowed on the protected base
+gtide push                                       # the first publish of the base is allowed too
+```
+
+Someone else's project:
+
+```bash
+gtide clone git@github.com:me/app.git            # git clone, then gtide init in the copy
+```
+
 Then, in daily use:
 
 ```bash
 gtide create feature/login            # new branch from the fresh base
-git commit -m "feat: add login form" # hooks validate the message and scan for secrets
+gtide save -m "feat: add login form"  # stage and commit, with the checks
+gtide status                          # where am I, what changed
 gtide push                            # publish the branch
+gtide pull                            # bring in what teammates pushed to it
 gtide update                          # bring the base branch into feature/login
 gtide pr                              # push and open a Pull Request
 gtide pr status                       # where is it? review state, pending reviewers, URL
@@ -160,17 +179,44 @@ Run `gtide <command> --help` for the built-in help.
 Creates `.tide.yml` (shared settings), `secret.tide.yml` (local credentials reference and secret patterns), adds `secret.tide.yml` to `.gitignore`, and installs the Git hooks.
 
 ```bash
-gtide init [--provider auto|github|gitlab] [--base <branch>] [--no-hooks]
+gtide init [--remote <url>] [--provider auto|github|gitlab] [--base <branch>] [--no-hooks] [--yes]
 ```
 
+- Outside a Git repository, `init` offers to create one (`git init`) with `--base` as its first branch (default `main`); it asks first, and `--yes` skips the question. It refuses to do so in your home folder or the filesystem root.
+- `--remote <url>` registers the remote (named after `remote:` in `.tide.yml`, else `origin`) before anything else, so the provider is detected from it and `secret.tide.yml` references the right token variable. It never replaces a remote that points somewhere else; use [`gtide remote set-url`](#gtide-remote).
 - `--provider` sets `provider:` in the new `.tide.yml`. The default is `auto`, which detects GitHub or GitLab from the remote URL (see [Providers](#providers)).
-- The default base branch is detected from `origin/HEAD`, then `main`, then `master`. Override it with `--base`.
+- The default base branch is detected from `origin/HEAD`, then `main`, then `master`, then the branch an empty repository starts on. Override it with `--base`.
 - An existing `.tide.yml` or `secret.tide.yml` is **never overwritten**. `secret.tide.yml` is created with owner-only permissions and references `${GITHUB_TOKEN}` or `${GITLAB_TOKEN}` (from `--provider`, or from the remote when `auto`).
 - `.gitignore` is created if missing, otherwise `secret.tide.yml` is appended to it. Existing entries are kept and the rule is never duplicated.
 - `init` reports, for each file, whether it was created, updated, or preserved.
 - An existing Git hook is **preserved**: it is renamed to `<hook>.pre-tide` and still runs after Tide's checks pass. Tide refuses to proceed if a `.pre-tide` file already exists.
 - Re-running `init` is safe; hooks that are already current are left alone.
 - `--no-hooks` (or `hooks.manage: false`) skips hook installation.
+
+### `gtide clone <url> [folder]`
+
+`git clone`, then `gtide init` in the copy, so a project is ready to work on in one step.
+
+```bash
+gtide clone git@github.com:me/app.git             # into ./app
+gtide clone https://gitlab.com/group/app.git my-app
+gtide clone git@github.com:me/app.git --provider github --no-hooks
+```
+
+The folder defaults to the repository name. A folder that already holds files is refused before Git runs. A `.tide.yml` already committed in the repository is kept as it is. `--base`, `--provider` and `--no-hooks` work as in `init`. The URL is checked first (see [`gtide remote`](#gtide-remote)).
+
+### `gtide remote`
+
+Adds, changes or shows the remote Tide publishes to: the one named by `remote:` in `.tide.yml`, else `origin`. It works before `gtide init`.
+
+```bash
+gtide remote add git@github.com:me/app.git      # register it; says which provider the URL maps to
+gtide remote set-url https://github.com/me/app.git
+gtide remote                                    # list remotes with provider; `show` does the same
+gtide remote add git@github.com:me/fork.git --name fork
+```
+
+`add` never replaces an existing remote: the same URL is a no-op, a different one is an error that points to `set-url`. The URL must be `https`, `http`, `ssh`, `git` or `file`, an scp-like address (`git@host:owner/repo.git`) or a local path. Tide refuses option-like input, remote helpers such as `ext::` (they make Git run a program), and a password or token written into the URL, which would end up in `.git/config`: use SSH or a Git credential helper.
 
 ### `gtide change <branch>`
 
@@ -229,6 +275,18 @@ BRANCH         UPDATED       LAST AUTHOR  UPSTREAM  BASE     STATUS
 
 Filters combine (they all must match). Progress messages go to stderr, so the table on stdout is safe to pipe.
 
+#### Delete and rename branches
+
+```bash
+gtide branch delete feature/old              # must be merged into its base
+gtide branch delete --merged                 # every branch `gtide branch --merged` lists
+gtide branch delete feature/old --remote     # also on the remote (asks first)
+gtide branch delete feature/wip --force      # not merged: those commits are lost
+gtide branch rename feature/old feature/new
+```
+
+`delete` never touches a protected branch or the checked-out one, and refuses a branch with commits its base does not have unless `--force`. It is all or nothing: if one name is refused, none is deleted. It lists what will go and asks once (`--yes` skips). `rename` accepts no protected name on either side and leaves the remote copy alone, telling you how to move it.
+
 ### `gtide create <branch>`
 
 Creates a branch from an up-to-date base and switches to it.
@@ -282,6 +340,16 @@ On conflicts the repository is left in Git's normal conflict state. Resolve the 
 
 If you are already on the base branch, `gtide update` simply fast-forwards it to the remote.
 
+### `gtide pull`
+
+Brings the remote copy of the current branch into it, where `gtide update` brings in the base branch.
+
+```bash
+gtide pull
+```
+
+It fetches the branch the current branch follows (its upstream, else the same name on the configured remote) and integrates it: a fast-forward when possible, otherwise a merge or rebase per `update.strategy`. Nothing is done when you are ahead or up to date. Like `update`, it stops before touching uncommitted work and never stashes or resets; conflicts are left in Git's normal state for [`gtide continue`](#gtide-continue-and-gtide-abort). A branch that is not on the remote yet is a usage error that points to `gtide push`.
+
 ### `gtide continue` and `gtide abort`
 
 When `gtide update` (or any merge, rebase, cherry-pick or revert) stops on conflicts, these finish or undo it without you having to remember which operation it was.
@@ -317,6 +385,31 @@ gtide review 123 --reset    # move the review branch back to the PR (asks first)
 
 Return to your previous branch with `git switch <branch>`.
 
+### `gtide status` and `gtide diff`
+
+```bash
+gtide status                  # branch, distance from upstream and base, what changed
+gtide diff                    # work tree against the index: what `gtide save` would add
+gtide diff --staged           # index against the last commit: what it would commit
+gtide diff -f src/login.go --patch
+```
+
+`status` shows the branch, how far it is ahead of or behind its upstream and its base (as of the last fetch: it does no network call), any merge or rebase in progress, and the changed files in groups: conflicts, staged, not staged and untracked. `diff` prints a per-file summary with added and deleted lines; `--patch` prints the full diff, without colour, textconv or external diff drivers. Untracked files are not part of a diff; they show in `status`.
+
+### `gtide stash`
+
+Puts local changes aside so that `update`, `pull` and `change` can run, and brings them back.
+
+```bash
+gtide stash -m "half-done login form"   # same as `gtide stash push`
+gtide stash --untracked                 # also untracked files
+gtide stash list
+gtide stash pop                         # newest, or `pop 2` / `pop stash@{2}`
+gtide stash drop 1                      # asks first (--yes skips)
+```
+
+Untracked files stay in place unless `--untracked`, and ignored files such as `secret.tide.yml` are never touched. A stash that does not apply cleanly is kept, and Tide says so.
+
 ### `gtide commit` and `gtide save`
 
 `gtide commit` commits what is staged. `gtide save` stages and commits in one step: the files you name with `-f`, or every change when you give none.
@@ -343,6 +436,8 @@ gtide save -m "docs: update readme" -f docs/                # a directory stages
 Before anything is committed, Tide checks that the branch is not protected, that the message follows your Conventional Commits rules, and that the staged lines hold no likely secrets (the same checks as the hooks, with friendlier errors). Your Git hooks still run, and Tide never uses `--no-verify`.
 
 `gtide save` without `-f` is like `git add --all`: modified, deleted, and new files that `.gitignore` does not exclude. Tide lists what it staged before committing, and the secret scan covers new files too. With `-f` it refuses when other files are already staged, so the commit holds exactly the files you named. If a check fails after staging, Tide restores the index and nothing stays staged. It also refuses during a merge or rebase, where plain `git commit` is the right tool.
+
+The first commit of a repository is the one commit allowed on a protected branch: with no history yet there is nothing to protect, and the base branch has to start somewhere. The same goes for the `pre-commit` hook. Every later commit on a protected branch is refused.
 
 ### `gtide history`
 
@@ -383,6 +478,20 @@ gtide history show 1a2b3c4                               # one commit, with the 
 gtide history --compare feat/sign-in feat/staging
 ```
 
+### `gtide undo` and `gtide amend`
+
+Fix the last commit, while it is still only yours.
+
+```bash
+gtide undo                                   # take it back; its changes stay staged
+gtide amend -f src/auth/login.go             # add a forgotten file to it
+gtide amend -m "fix(auth): reject empty token"   # reword it
+```
+
+`undo` moves the branch to the parent of the last commit and keeps that commit's changes staged, so nothing is lost and `gtide save` can commit them again. `amend` folds the staged changes (and the files given with `-f`) into the last commit and, with `-m`, `--type`, `--scope` or `--body`, replaces its message. The message and the staged lines go through the same Conventional Commits and secret checks as `gtide save`, and a failed check restores the index.
+
+Both refuse a commit that is already on a remote branch (rewriting it would diverge from everyone who fetched it; make a new commit or use `git revert`) and a merge commit. `undo` also refuses the first commit of a repository, and `amend` a protected branch.
+
 ### `gtide push`
 
 Pushes the current branch to the configured remote under the same name and sets it as upstream.
@@ -392,7 +501,7 @@ gtide push            # publish the current branch
 gtide push --force    # after a rebase or amend; asks [y/N] (skip with --yes)
 ```
 
-Refuses on a detached HEAD and on protected branches (`branches.protected`). Uncommitted changes are not pushed, and Tide warns when there are some. `--force` is `--force-with-lease`: it replaces the remote branch only if it still points where your last fetch saw it, so a teammate's newer commits are never overwritten silently. Your `pre-push` hook still applies. A plain `git push` keeps working too.
+Refuses on a detached HEAD and on protected branches (`branches.protected`), with one exception: a protected branch that is not on the remote yet can be published once, which is how a new project starts. Updating, deleting or force-pushing it stays refused (the `pre-push` hook follows the same rule). Uncommitted changes are not pushed, and Tide warns when there are some. `--force` is `--force-with-lease`: it replaces the remote branch only if it still points where your last fetch saw it, so a teammate's newer commits are never overwritten silently. Your `pre-push` hook still applies. A plain `git push` keeps working too.
 
 ### `gtide pr`
 
@@ -461,6 +570,20 @@ Review status is one of `approved by ...`, `changes requested by ...`, or `revie
 ### `gtide pr status`
 
 Shows the request opened from the current branch, if there is one: title, state, review status, branches, outstanding review requests, and URL. An open request wins over a closed or merged one for the same branch; requests from forks are ignored. Without one it says so and suggests `gtide pr`.
+
+### `gtide tag`
+
+Lists, creates, publishes and deletes version tags.
+
+```bash
+gtide tag                                         # newest version first (-n 0 for all)
+gtide tag create v1.5.0 -m "Release 1.5.0"        # annotated, on HEAD
+gtide tag create v1.5.0 --push                    # and publish it (asks first)
+gtide tag push v1.5.0
+gtide tag delete v1.5.0 --remote                  # locally and on the remote (asks first)
+```
+
+The name must be a version: `v1.4.0`, `1.4.0`, `v2.0.0-rc.1`. `create` only works on a protected branch (`--any-branch` lifts that), on a commit that is already on the remote, and when the branch is not behind its upstream; it never moves or replaces an existing tag. Publishing a version tag can start a release build (this repository's `release.yml` does), so `push` and `delete --remote` ask `[y/N]` first; `--yes` skips the question.
 
 ### `gtide doctor`
 
@@ -620,7 +743,7 @@ If `.env` is **tracked by Git**, Tide refuses to use it, since the token is alre
 
 **Conflict markers**: added lines that start with `<<<<<<<` or `>>>>>>>` (what Git writes into a file on a conflict) block the commit, so an unresolved conflict cannot slip into history. This check is always on, also when `secrets.enabled` is false. `=======` alone is not flagged, since it is a common heading underline. For content that really contains a marker, put `tide:allow-conflict-marker` on that line. `gtide commit` and `gtide save` apply the same check.
 
-**Protected branches** stop direct commits and pushes, nudging the team to work on branches and merge through Pull Requests. Commits made while HEAD is detached (for example during a rebase) are not blocked.
+**Protected branches** stop direct commits and pushes, nudging the team to work on branches and merge through Pull Requests. The first commit of a new repository, and the first publish of a protected branch that is not on the remote yet, are allowed so a project can start. Commits made while HEAD is detached (for example during a rebase) are not blocked.
 
 To bypass the hooks once, use Git's own flag: `git commit --no-verify` or `git push --no-verify`.
 
@@ -647,7 +770,7 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 - **Secrets stay out of output.** Tide never prints matched values, tokens, or credentials embedded in remote URLs.
 - **Tokens.** Tide reads the provider token from the environment or `.env` (see [Authentication](#authentication)) and never stores it. `secret.tide.yml` only references a variable, and a literal token there is rejected. Do not put tokens in `.tide.yml`.
 - **Repository configuration is untrusted input.** Tide bounds file size and pattern count, uses Go's RE2 regular expressions (no catastrophic backtracking), and validates branch names before passing them to Git. Git is always run with an argument list, never through a shell.
-- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API), `history` (`--remote` fetches), `create` (fetch, and push with `--push`), `update` (fetch), `review` (API and fetch), and `pr` (fetch, push, and API; `pr list`, `pr view` and `pr status` only call the API) touch the network, and each says so as it runs.
+- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API; `branch delete --remote` pushes), `history` (`--remote` fetches), `clone` (clones), `create` (fetch, and push with `--push`), `update` and `pull` (fetch), `push` and `tag push` (push; `tag delete --remote` too), `review` (API and fetch), and `pr` (fetch, push, and API; `pr list`, `pr view` and `pr status` only call the API) touch the network, and each says so as it runs.
 - **GitHub and GitLab.** `review`, `pr` and `branch --hosted` support `github.com` and GitLab (gitlab.com or self-hosted). `TIDE_GITHUB_API_URL` and `TIDE_GITLAB_API_URL` point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing. GitHub Enterprise is not supported yet.
 - No telemetry.
 
@@ -660,7 +783,7 @@ Git cannot find the binary. Put `gtide` in a directory on the `PATH` that your G
 Run `gtide doctor`. Check that `core.hooksPath` is not pointing elsewhere (`git config core.hooksPath`) and that the hook files are executable. Re-run `gtide init` after changing the hooks directory.
 
 **`gtide update`: "uncommitted changes would be at risk".**
-Commit or stash your tracked changes, then re-run. Tide will not touch them.
+Commit them with `gtide save`, or put them aside with `gtide stash`, then re-run (`gtide stash pop` brings them back). Tide will not touch them.
 
 **`gtide update`: "cannot fast-forward local <base>".**
 The local base branch has commits the remote does not, or is checked out in another worktree. Fix that branch by hand (or work on a separate branch), then re-run.
