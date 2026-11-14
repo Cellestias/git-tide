@@ -42,7 +42,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, pr
 	ghRepo, err := provider.RepoFromRemote(ctx, repo, prs, cfg.Remote)
 	if errors.Is(err, provider.ErrNoRemote) {
 		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not configured", cfg.Remote),
-			"add it with `git remote add` or change `remote` in .tide.yml", err)
+			"add it with `gtide remote add <url>` or change `remote` in .tide.yml", err)
 	}
 	if err != nil {
 		return apperr.Wrap(apperr.CodeConfig, fmt.Sprintf("remote %q is not a supported %s remote", cfg.Remote, prs.Name()),

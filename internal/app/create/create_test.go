@@ -256,3 +256,21 @@ func TestUnreachableRemoteIsExternalError(t *testing.T) {
 		t.Errorf("--from: %v", err)
 	}
 }
+
+func TestMissingRemoteIsAConfigErrorUnlessLocal(t *testing.T) {
+	dir := testutil.NewRepo(t) // no remote at all
+	repo := repository.New(executor.Exec{}, dir)
+	run := func(opts Options) error {
+		var out, errOut bytes.Buffer
+		return Run(context.Background(), repo, domain.Default(), "feature/x", opts, output.Printer{Out: &out, Err: &errOut})
+	}
+	if err := run(Options{}); apperr.CodeOf(err) != apperr.CodeConfig {
+		t.Fatalf("without --local: err = %v, want config error", err)
+	}
+	if err := run(Options{Local: true, Push: true}); apperr.CodeOf(err) != apperr.CodeConfig {
+		t.Fatalf("--push needs a remote: err = %v, want config error", err)
+	}
+	if err := run(Options{Local: true}); err != nil {
+		t.Fatalf("--local: %v", err)
+	}
+}

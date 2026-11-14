@@ -48,7 +48,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	}
 	if !branch.Contains(remotes, remote) {
 		return apperr.New(apperr.CodeConfig, fmt.Sprintf("remote %q is not configured in this repository", remote),
-			"add it with `git remote add` or change `remote` in .tide.yml")
+			"add it with `gtide remote add <url>` or change `remote` in .tide.yml")
 	}
 
 	trackingRef := "refs/remotes/" + remote + "/" + base
