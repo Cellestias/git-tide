@@ -295,3 +295,42 @@ func TestCatalogDoesNotFlagOrdinaryCode(t *testing.T) {
 		}
 	}
 }
+
+func TestInitRegistersTheRemoteBeforeDetectingTheProvider(t *testing.T) {
+	dir := testutil.NewEmptyRepo(t)
+	repo := open(t, dir)
+	res, err := Run(context.Background(), repo, Options{Remote: "git@gitlab.com:group/app.git", NoHooks: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.RemoteAdded || res.RemoteName != "origin" {
+		t.Fatalf("res = %+v", res)
+	}
+	if got := testutil.Run(t, dir, "remote", "get-url", "origin"); got != "git@gitlab.com:group/app.git" {
+		t.Errorf("origin = %q", got)
+	}
+	secret, err := os.ReadFile(filepath.Join(dir, "secret.tide.yml"))
+	if err != nil || !strings.Contains(string(secret), "${GITLAB_TOKEN}") {
+		t.Errorf("secret.tide.yml should reference GITLAB_TOKEN (err=%v):\n%s", err, secret)
+	}
+
+	again, err := Run(context.Background(), repo, Options{Remote: "git@gitlab.com:group/app.git", NoHooks: true})
+	if err != nil || again.RemoteAdded {
+		t.Errorf("same remote again: added=%v err=%v", again.RemoteAdded, err)
+	}
+	if _, err := Run(context.Background(), repo, Options{Remote: "git@gitlab.com:group/other.git", NoHooks: true}); err == nil {
+		t.Error("a different URL for an existing remote must be refused")
+	}
+	if _, err := Run(context.Background(), repo, Options{Remote: "ext::sh -c id", NoHooks: true}); err == nil {
+		t.Error("a remote-helper URL must be refused")
+	}
+}
+
+func TestInitTakesTheBaseFromAnUnbornBranch(t *testing.T) {
+	dir := t.TempDir()
+	testutil.Run(t, dir, "init", "-q", "-b", "trunk")
+	res, err := Run(context.Background(), open(t, dir), Options{NoHooks: true})
+	if err != nil || res.Base != "trunk" {
+		t.Fatalf("base = %q, err = %v", res.Base, err)
+	}
+}

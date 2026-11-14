@@ -84,6 +84,16 @@ func NewRepo(t testing.TB) string {
 	return dir
 }
 
+// NewEmptyRepo creates a repository on branch main with no commit at all.
+func NewEmptyRepo(t testing.TB) string {
+	t.Helper()
+	dir := t.TempDir()
+	Run(t, dir, "init", "-q", "-b", "main")
+	Run(t, dir, "config", "user.name", "Git Tide Test")
+	Run(t, dir, "config", "user.email", "git-tide-test@example.invalid")
+	return dir
+}
+
 // NewRepoWithRemote creates a bare "origin", a clone of it with a main branch
 // already pushed, and returns (clone, bare).
 func NewRepoWithRemote(t testing.TB) (clone, bare string) {

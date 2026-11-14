@@ -30,7 +30,7 @@ func (e *env) provider(ctx context.Context, repo *repository.Repository, cfg dom
 	resolved, configured, err := provider.RemoteURLs(ctx, repo, cfg.Remote)
 	if err != nil {
 		return nil, apperr.Wrap(apperr.CodeConfig, "remote "+cfg.Remote+" is not configured",
-			"add it with `git remote add` or change `remote` in .tide.yml", err)
+			"add it with `gtide remote add <url>` or change `remote` in .tide.yml", err)
 	}
 	name, err := providers.Resolve(cfg.Provider, configured, resolved)
 	if err != nil {

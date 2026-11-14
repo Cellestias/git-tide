@@ -81,7 +81,7 @@ func Run(ctx context.Context, ex executor.Executor, dir string) []Check {
 
 	resolved, rerr := repo.RemoteURL(ctx, c.Remote)
 	if rerr != nil {
-		add(Warn, "remote", fmt.Sprintf("remote %q is not configured", c.Remote), "`gtide update`, `gtide pr` and `gtide review` need it")
+		add(Warn, "remote", fmt.Sprintf("remote %q is not configured", c.Remote), "`gtide update`, `gtide pr` and `gtide review` need it; add it with `gtide remote add <url>`")
 	} else {
 		configured, _ := repo.RemoteConfiguredURL(ctx, c.Remote)
 		name, err := providers.Resolve(c.Provider, configured, executor.Redact(resolved))

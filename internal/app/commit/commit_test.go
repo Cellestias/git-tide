@@ -274,3 +274,16 @@ func TestSaveEverythingSecretUndoesStaging(t *testing.T) {
 		t.Errorf("nothing may stay staged; staged=%q", staged(t, dir))
 	}
 }
+
+func TestFirstCommitIsAllowedOnAProtectedBranch(t *testing.T) {
+	dir := testutil.NewEmptyRepo(t) // on main, which is protected by default
+	repo := repository.New(executor.Exec{}, dir)
+	testutil.WriteFile(t, dir, "a.txt", "a\n")
+	if _, err := run(repo, dir, Options{Message: "chore: initial commit", Everything: true}); err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+	testutil.WriteFile(t, dir, "b.txt", "b\n")
+	if _, err := run(repo, dir, Options{Message: "feat: add b", Everything: true}); apperr.CodeOf(err) != apperr.CodePolicy {
+		t.Fatalf("second commit on main: err = %v, want policy error", err)
+	}
+}
