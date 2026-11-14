@@ -1,12 +1,17 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/cellestias/git-tide/internal/app/branches"
 	"github.com/cellestias/git-tide/internal/app/change"
+	appclone "github.com/cellestias/git-tide/internal/app/clone"
 	appcommit "github.com/cellestias/git-tide/internal/app/commit"
 	"github.com/cellestias/git-tide/internal/app/create"
 	"github.com/cellestias/git-tide/internal/app/doctor"
@@ -15,67 +20,239 @@ import (
 	"github.com/cellestias/git-tide/internal/app/initrepo"
 	"github.com/cellestias/git-tide/internal/app/pr"
 	"github.com/cellestias/git-tide/internal/app/push"
+	remoteapp "github.com/cellestias/git-tide/internal/app/remote"
 	"github.com/cellestias/git-tide/internal/app/resolve"
 	"github.com/cellestias/git-tide/internal/app/review"
 	"github.com/cellestias/git-tide/internal/app/update"
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/config"
+	"github.com/cellestias/git-tide/internal/git/executor"
+	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/provider"
 )
 
 func (e *env) initCmd() *cobra.Command {
-	var opts initrepo.Options
+	var (
+		opts initrepo.Options
+		yes  bool
+	)
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Create " + config.FileName + ", " + config.SecretFileName + " and install Git hooks",
 		Long: "Create " + config.FileName + " (shared settings) and " + config.SecretFileName + " (local credentials reference and\n" +
 			"secret patterns), add " + config.SecretFileName + " to .gitignore, and install Tide's Git hooks. Existing files are never overwritten.\n" +
 			"An existing hook is preserved as <hook>.pre-tide and still runs after Tide's checks.\n" +
+			"Outside a Git repository it offers to create one first (git init), with --base as its first branch (default main).\n" +
+			"--remote <url> registers the remote (origin, or `remote` from " + config.FileName + "); the provider is then detected from it.\n" +
 			"--provider chooses github, gitlab, or auto (default: detect from the remote).",
+		Example: "  gtide init                                        # in an existing repository\n" +
+			"  gtide init --remote git@github.com:me/app.git    # also set the remote\n" +
+			"  mkdir app && cd app && gtide init --yes --remote https://gitlab.com/me/app.git   # a new project",
 		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			repo, err := e.openRepo(cmd.Context())
-			if err != nil {
-				return err
+			repo, err := repository.Open(cmd.Context(), e.ex, e.dir)
+			switch {
+			case errors.Is(err, repository.ErrNotRepository):
+				if repo, err = e.createRepo(cmd.Context(), opts.Base, yes); err != nil {
+					return err
+				}
+			case err != nil:
+				return apperr.Wrap(apperr.CodeExternal, "cannot run git", "make sure Git is installed and on PATH", err)
 			}
 			res, err := initrepo.Run(cmd.Context(), repo, opts)
-			for _, c := range res.HookChanges {
-				e.p.Success("hook %s", c.Describe())
+			e.reportInit(res)
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&opts.Base, "base", "", "default base branch (default: detected from the repository)")
+	cmd.Flags().StringVar(&opts.Provider, "provider", "", "hosting provider: auto, github or gitlab (default: auto)")
+	cmd.Flags().StringVar(&opts.Remote, "remote", "", "register this `url` as the remote")
+	cmd.Flags().BoolVar(&opts.NoHooks, "no-hooks", false, "do not install Git hooks")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "create the Git repository without asking when there is none")
+	return cmd
+}
+
+// createRepo runs `git init` in the current folder, after confirmation. The
+// first branch is name, or main.
+func (e *env) createRepo(ctx context.Context, name string, yes bool) (*repository.Repository, error) {
+	if name == "" {
+		name = "main"
+	}
+	if home, err := os.UserHomeDir(); err == nil && filepath.Clean(e.dir) == filepath.Clean(home) || filepath.Dir(e.dir) == e.dir {
+		return nil, apperr.New(apperr.CodeUnsafeRepo, "refusing to create a Git repository in "+e.dir, "go into a project folder first")
+	}
+	if !yes {
+		ok, err := e.confirm(fmt.Sprintf("No Git repository in %s. Create one with branch %q? [y/N] ", e.dir, name))
+		if err != nil {
+			return nil, apperr.Wrap(apperr.CodeGeneral, "cannot read confirmation", "use --yes to skip the prompt", err)
+		}
+		if !ok {
+			return nil, apperr.New(apperr.CodeUnsafeRepo, "not inside a Git repository; nothing was created",
+				"run `git init`, or `gtide init --yes` to create one here")
+		}
+	}
+	repo, err := repository.Init(ctx, e.ex, e.dir, name)
+	if err != nil {
+		if errors.As(err, new(*apperr.Error)) {
+			return nil, err
+		}
+		return nil, apperr.Wrap(apperr.CodeExternal, "cannot create the Git repository", "", err)
+	}
+	e.p.Success("created a Git repository in %s (branch %s)", repo.Root, name)
+	return repo, nil
+}
+
+// reportInit prints what init (or clone) did.
+func (e *env) reportInit(res initrepo.Result) {
+	for _, c := range res.HookChanges {
+		e.p.Success("hook %s", c.Describe())
+	}
+	if res.RemoteURL != "" {
+		if res.RemoteAdded {
+			e.p.Success("added remote %s: %s", res.RemoteName, res.RemoteURL)
+		} else {
+			e.p.Info("remote %s already points to %s", res.RemoteName, res.RemoteURL)
+		}
+	}
+	if res.ConfigPath == "" {
+		return
+	}
+	if res.ConfigCreated {
+		e.p.Success("created %s (provider: %s, base branch: %s)", res.ConfigPath, res.Provider, res.Base)
+	} else if res.Base != "" {
+		e.p.Info("preserved %s (already exists)", res.ConfigPath)
+	}
+	for _, n := range res.Notes {
+		e.p.Warn("%s", n)
+	}
+	if res.SecretCreated {
+		e.p.Success("created %s (set the token variable it references)", res.SecretPath)
+	} else if res.Base != "" {
+		e.p.Info("preserved %s (already exists)", res.SecretPath)
+	}
+	switch {
+	case res.IgnoreCreated:
+		e.p.Success("created .gitignore with %s", config.SecretFileName)
+	case res.IgnoreUpdated:
+		e.p.Success("updated .gitignore: added %s", config.SecretFileName)
+	case res.Base != "":
+		e.p.Info("preserved .gitignore (%s already ignored)", config.SecretFileName)
+	}
+	if res.HooksSkipped {
+		e.p.Info("hooks not installed")
+	}
+}
+
+func (e *env) cloneCmd() *cobra.Command {
+	var opts initrepo.Options
+	cmd := &cobra.Command{
+		Use:   "clone <url> [folder]",
+		Short: "Clone a repository and set it up for Tide",
+		Long: "git clone, then `gtide init` in the copy: " + config.FileName + ", " + config.SecretFileName + " and the Git hooks.\n" +
+			"The folder defaults to the repository name. An existing, non-empty folder is refused.\n" +
+			"A " + config.FileName + " already committed in the repository is kept as it is.",
+		Example: "  gtide clone git@github.com:me/app.git\n  gtide clone https://gitlab.com/group/app.git my-app",
+		Args:    cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := ""
+			if len(args) == 2 {
+				target = args[1]
 			}
-			if err != nil {
-				return err
+			e.p.Step("Cloning %s", executor.Redact(args[0]))
+			res, err := appclone.Run(cmd.Context(), e.ex, e.dir, args[0], target, opts)
+			if res.Dir != "" {
+				e.p.Success("cloned into %s", res.Dir)
 			}
-			if res.ConfigCreated {
-				e.p.Success("created %s (provider: %s, base branch: %s)", res.ConfigPath, res.Provider, res.Base)
-			} else {
-				e.p.Info("preserved %s (already exists)", res.ConfigPath)
+			e.reportInit(res.Init)
+			if err == nil {
+				e.p.Info("next: cd %s", res.Dir)
 			}
-			for _, n := range res.Notes {
-				e.p.Warn("%s", n)
-			}
-			if res.SecretCreated {
-				e.p.Success("created %s (set the token variable it references)", res.SecretPath)
-			} else {
-				e.p.Info("preserved %s (already exists)", res.SecretPath)
-			}
-			switch {
-			case res.IgnoreCreated:
-				e.p.Success("created .gitignore with %s", config.SecretFileName)
-			case res.IgnoreUpdated:
-				e.p.Success("updated .gitignore: added %s", config.SecretFileName)
-			default:
-				e.p.Info("preserved .gitignore (%s already ignored)", config.SecretFileName)
-			}
-			if res.HooksSkipped {
-				e.p.Info("hooks not installed")
-			}
-			return nil
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&opts.Base, "base", "", "default base branch (default: detected from the repository)")
 	cmd.Flags().StringVar(&opts.Provider, "provider", "", "hosting provider: auto, github or gitlab (default: auto)")
 	cmd.Flags().BoolVar(&opts.NoHooks, "no-hooks", false, "do not install Git hooks")
 	return cmd
+}
+
+func (e *env) remoteCmd() *cobra.Command {
+	name := ""
+	cmd := &cobra.Command{
+		Use:   "remote [add|set-url|show]",
+		Short: "Add, change or show the remote",
+		Long: "Manage the remote Tide publishes to: the one named by `remote` in " + config.FileName + ", or origin. The URL is checked first:\n" +
+			"https, ssh and scp-like addresses are accepted; a password or token inside the URL, and remote helpers like ext::, are refused.\n" +
+			"Without a subcommand it shows the remotes.",
+		Example: "  gtide remote add git@github.com:me/app.git\n  gtide remote set-url https://github.com/me/app.git\n  gtide remote",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return e.remoteShow(cmd.Context())
+		},
+	}
+	cmd.PersistentFlags().StringVar(&name, "name", "", "remote name (default: `remote` from "+config.FileName+", else origin)")
+	add := &cobra.Command{
+		Use:   "add <url>",
+		Short: "Register the remote",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, n, err := e.remoteTarget(cmd.Context(), name)
+			if err != nil {
+				return err
+			}
+			return remoteapp.Add(cmd.Context(), repo, n, args[0], e.p)
+		},
+	}
+	set := &cobra.Command{
+		Use:   "set-url <url>",
+		Short: "Point the remote at another URL",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, n, err := e.remoteTarget(cmd.Context(), name)
+			if err != nil {
+				return err
+			}
+			return remoteapp.SetURL(cmd.Context(), repo, n, args[0], e.p)
+		},
+	}
+	show := &cobra.Command{
+		Use:   "show",
+		Short: "List the remotes and their provider",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return e.remoteShow(cmd.Context())
+		},
+	}
+	cmd.AddCommand(add, set, show)
+	return cmd
+}
+
+// remoteTarget opens the repository and picks the remote name: --name, else the
+// one in .tide.yml, else origin. It works before `gtide init`.
+func (e *env) remoteTarget(ctx context.Context, name string) (*repository.Repository, string, error) {
+	repo, err := e.openRepo(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if name != "" {
+		return repo, name, nil
+	}
+	res, err := config.Load(repo.Root)
+	if err != nil {
+		return nil, "", err
+	}
+	if res.Found && res.Config.Remote != "" {
+		return repo, res.Config.Remote, nil
+	}
+	return repo, remoteapp.DefaultName, nil
+}
+
+func (e *env) remoteShow(ctx context.Context) error {
+	repo, name, err := e.remoteTarget(ctx, "")
+	if err != nil {
+		return err
+	}
+	return remoteapp.Show(ctx, repo, name, e.p)
 }
 
 func (e *env) updateCmd() *cobra.Command {

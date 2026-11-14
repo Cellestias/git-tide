@@ -835,3 +835,64 @@ func TestPRUsesDescriptionTemplate(t *testing.T) {
 		t.Fatalf("symlinked template: %d calls=%d\n%s", code, rec.snapshot().Calls, out)
 	}
 }
+
+// A new project from nothing: init creates the repository and the remote, the
+// first commit and the first push of the protected base are allowed, later ones are not.
+func TestStartANewProjectEndToEnd(t *testing.T) {
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	testutil.Run(t, root, "init", "-q", "--bare", "-b", "main", bare)
+	dir := filepath.Join(root, "app")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, code := runEnv(t, dir, nil, "n\n", filepath.Join(binDir, "gtide"), "init"); code != 6 || !strings.Contains(out, "nothing was created") {
+		t.Fatalf("init declined: %d\n%s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		t.Fatal("declining must not create a repository")
+	}
+
+	out, code := gtide(t, dir, "init", "--yes", "--remote", bare)
+	if code != 0 || !strings.Contains(out, "created a Git repository") || !strings.Contains(out, "added remote origin") {
+		t.Fatalf("init --yes --remote: %d\n%s", code, out)
+	}
+	if out, code := gtide(t, dir, "remote"); code != 0 || !strings.Contains(out, "origin") || !strings.Contains(out, bare) {
+		t.Fatalf("remote: %d\n%s", code, out)
+	}
+
+	testutil.WriteFile(t, dir, "main.go", "package main\n")
+	if out, code := gtide(t, dir, "save", "-m", "chore: initial commit"); code != 0 {
+		t.Fatalf("first save on main: %d\n%s", code, out)
+	}
+	if out, code := gtide(t, dir, "push"); code != 0 || !strings.Contains(out, "first time") {
+		t.Fatalf("first push of main: %d\n%s", code, out)
+	}
+	if got := testutil.Run(t, bare, "rev-parse", "main"); got != testutil.Run(t, dir, "rev-parse", "main") {
+		t.Errorf("main not published: %s", got)
+	}
+
+	testutil.WriteFile(t, dir, "more.go", "package main\n")
+	if out, code := gtide(t, dir, "save", "-m", "feat: more"); code != 4 {
+		t.Fatalf("second save on main: %d\n%s", code, out)
+	}
+	if out, code := gtide(t, dir, "create", "feature/x"); code != 0 {
+		t.Fatalf("create: %d\n%s", code, out)
+	}
+
+	if out, code := gtide(t, dir, "remote", "add", "ext::sh -c id"); code != 2 {
+		t.Fatalf("remote helper URL: %d\n%s", code, out)
+	}
+
+	cloned := filepath.Join(root, "copy")
+	if out, code := gtide(t, root, "clone", bare, "copy"); code != 0 || !strings.Contains(out, "cloned into") {
+		t.Fatalf("clone: %d\n%s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(cloned, ".tide.yml")); err != nil {
+		t.Errorf("clone did not init: %v", err)
+	}
+	if out, code := gtide(t, root, "clone", bare, "copy"); code != 6 {
+		t.Fatalf("clone into a non-empty folder: %d\n%s", code, out)
+	}
+}
