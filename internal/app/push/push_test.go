@@ -157,3 +157,27 @@ func TestForceKeepsLeaseOverUnseenWork(t *testing.T) {
 		t.Error("force overwrote commits we had not fetched")
 	}
 }
+
+func TestFirstPublishOfAProtectedBranchIsAllowed(t *testing.T) {
+	bare := t.TempDir()
+	testutil.Run(t, bare, "init", "-q", "--bare", "-b", "main")
+	dir := testutil.NewRepo(t) // on main, with one commit
+	testutil.Run(t, dir, "remote", "add", "origin", bare)
+	repo := repository.New(executor.Exec{}, dir)
+
+	if err := run(repo, domain.Default(), Options{}); err != nil {
+		t.Fatalf("first publish of main: %v", err)
+	}
+	if got := testutil.Run(t, bare, "rev-parse", "main"); got != testutil.Run(t, dir, "rev-parse", "main") {
+		t.Errorf("main was not published: %s", got)
+	}
+
+	testutil.WriteFile(t, dir, "more.txt", "m\n")
+	testutil.Commit(t, dir, "feat: more")
+	if err := run(repo, domain.Default(), Options{}); code(err) != apperr.CodePolicy {
+		t.Fatalf("second push of main: err = %v, want policy error", err)
+	}
+	if err := run(repo, domain.Default(), Options{Force: true}); code(err) != apperr.CodePolicy {
+		t.Fatalf("force push of main: err = %v, want policy error", err)
+	}
+}

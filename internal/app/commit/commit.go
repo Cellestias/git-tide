@@ -45,7 +45,13 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	if err != nil && !errors.Is(err, repository.ErrDetachedHead) {
 		return apperr.Wrap(apperr.CodeExternal, "cannot determine current branch", "", err)
 	}
-	if d := (policy.Protection{Protected: cfg.Branches.Protected}).Commit(current); !d.Allowed {
+	// A repository with no commit has nothing to protect yet: the first commit
+	// has to land somewhere, and it is usually on the base branch.
+	started, err := repo.HasCommits(ctx)
+	if err != nil {
+		return apperr.Wrap(apperr.CodeExternal, "cannot inspect the repository", "", err)
+	}
+	if d := (policy.Protection{Protected: cfg.Branches.Protected}).Commit(current); started && !d.Allowed {
 		return apperr.New(apperr.CodePolicy, d.Reason, "")
 	}
 

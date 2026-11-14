@@ -30,16 +30,22 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot determine current branch", "", err)
 	}
-	if d := (policy.Protection{Protected: cfg.Branches.Protected}).Push(current); !d.Allowed {
-		return apperr.New(apperr.CodePolicy, d.Reason, "")
-	}
 	remotes, err := repo.Remotes(ctx)
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot list remotes", "", err)
 	}
 	if !has(remotes, cfg.Remote) {
 		return apperr.New(apperr.CodeConfig, fmt.Sprintf("remote %q is not configured", cfg.Remote),
-			"add it with `git remote add` or change `remote` in .tide.yml")
+			"add it with `gtide remote add <url>` or change `remote` in .tide.yml")
+	}
+	if d := (policy.Protection{Protected: cfg.Branches.Protected}).Push(current); !d.Allowed {
+		// The first publish of a protected branch (it is not on the remote yet) is
+		// how a new project starts; any later push to it is refused.
+		exists, err := repo.RemoteHasBranch(ctx, cfg.Remote, current)
+		if err != nil || exists || opts.Force {
+			return apperr.New(apperr.CodePolicy, d.Reason, "")
+		}
+		p.Note("%s is not on %s yet: publishing it for the first time", current, cfg.Remote)
 	}
 
 	if changes, _ := repo.TrackedChanges(ctx); len(changes) > 0 {

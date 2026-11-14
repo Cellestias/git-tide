@@ -30,7 +30,12 @@ func PreCommit(ctx context.Context, repo *repository.Repository, cfg domain.Conf
 	if err != nil && !errors.Is(err, repository.ErrDetachedHead) {
 		return apperr.Wrap(apperr.CodeExternal, "cannot determine current branch", "", err)
 	}
-	if d := (policy.Protection{Protected: cfg.Branches.Protected}).Commit(current); !d.Allowed {
+	started, err := repo.HasCommits(ctx)
+	if err != nil {
+		return apperr.Wrap(apperr.CodeExternal, "cannot inspect the repository", "", err)
+	}
+	// The first commit of a new repository is allowed on a protected branch.
+	if d := (policy.Protection{Protected: cfg.Branches.Protected}).Commit(current); started && !d.Allowed {
 		return apperr.New(apperr.CodePolicy, d.Reason, "to bypass this local guardrail once: git commit --no-verify")
 	}
 
@@ -99,7 +104,7 @@ func CommitMsg(cfg domain.Config, file string) error {
 	return nil
 }
 
-// PrePush rejects pushes that update or delete protected branches. in carries
+// PrePush rejects pushes that update or delete protected branches; creating one is allowed. in carries
 // the lines Git writes to the hook: "<local ref> <local sha> <remote ref> <remote sha>".
 func PrePush(cfg domain.Config, in io.Reader) error {
 	prot := policy.Protection{Protected: cfg.Branches.Protected}
@@ -113,9 +118,17 @@ func PrePush(cfg domain.Config, in io.Reader) error {
 		if !ok {
 			continue
 		}
+		// Creating the branch on the remote (all-zero remote sha, real local sha) is
+		// the first publish of a new repository, not an update of protected work.
+		if isZero(fields[3]) && !isZero(fields[1]) {
+			continue
+		}
 		if d := prot.Push(name); !d.Allowed {
 			return apperr.New(apperr.CodePolicy, d.Reason, "to bypass this local guardrail once: git push --no-verify")
 		}
 	}
 	return sc.Err()
 }
+
+// isZero reports whether sha is Git's all-zero "no object" id.
+func isZero(sha string) bool { return strings.Trim(sha, "0") == "" }

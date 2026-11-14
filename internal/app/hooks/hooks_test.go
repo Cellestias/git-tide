@@ -116,3 +116,32 @@ func TestPreCommitRejectsConflictMarkers(t *testing.T) {
 		t.Errorf("allow marker ignored: %v", err)
 	}
 }
+
+func TestPreCommitAllowsTheFirstCommitOfANewRepository(t *testing.T) {
+	ctx := context.Background()
+	dir := testutil.NewEmptyRepo(t) // main is protected, but there is no history to protect yet
+	repo, _ := repository.Open(ctx, executor.Exec{}, dir)
+	testutil.WriteFile(t, dir, "a.txt", "a\n")
+	testutil.Run(t, dir, "add", "-A")
+	if err := PreCommit(ctx, repo, domain.Default()); err != nil {
+		t.Fatalf("first commit: %v", err)
+	}
+}
+
+func TestPrePushAllowsCreatingAProtectedBranchOnTheRemote(t *testing.T) {
+	cfg := domain.Default()
+	zero := strings.Repeat("0", 40)
+	sha := strings.Repeat("a", 40)
+	create := strings.NewReader("refs/heads/main " + sha + " refs/heads/main " + zero + "\n")
+	if err := PrePush(cfg, create); err != nil {
+		t.Fatalf("creating main: %v", err)
+	}
+	update := strings.NewReader("refs/heads/main " + sha + " refs/heads/main " + strings.Repeat("b", 40) + "\n")
+	if apperr.CodeOf(PrePush(cfg, update)) != apperr.CodePolicy {
+		t.Error("updating main should be rejected")
+	}
+	del := strings.NewReader("(delete) " + zero + " refs/heads/main " + sha + "\n")
+	if apperr.CodeOf(PrePush(cfg, del)) != apperr.CodePolicy {
+		t.Error("deleting main should be rejected")
+	}
+}
