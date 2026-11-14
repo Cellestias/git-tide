@@ -39,7 +39,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	}
 	remote := cfg.Remote
 
-	if err := ensureSafe(ctx, repo); err != nil {
+	if err := EnsureSafe(ctx, repo, "gtide update"); err != nil {
 		return err
 	}
 	remotes, err := repo.Remotes(ctx)
@@ -82,12 +82,14 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		err = repo.Merge(ctx, "refs/heads/"+base)
 	}
 	if err != nil {
-		return integrationFailure(ctx, repo, cfg.Update.Strategy, err)
+		return IntegrationFailure(ctx, repo, cfg.Update.Strategy, err)
 	}
 	return report(ctx, repo, p, before, base)
 }
 
-func ensureSafe(ctx context.Context, repo *repository.Repository) error {
+// EnsureSafe stops, before anything is touched, when an operation is in progress
+// or tracked files have uncommitted changes. command names what to re-run.
+func EnsureSafe(ctx context.Context, repo *repository.Repository, command string) error {
 	op, err := repo.InProgressOperation(ctx)
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot inspect repository state", "", err)
@@ -109,12 +111,13 @@ func ensureSafe(ctx context.Context, repo *repository.Repository) error {
 		if len(changes) > len(shown) {
 			msg += fmt.Sprintf(" and %d more", len(changes)-len(shown))
 		}
-		return apperr.New(apperr.CodeUnsafeRepo, msg, "commit or stash them, then re-run `gtide update`")
+		return apperr.New(apperr.CodeUnsafeRepo, msg, "commit them (`gtide save`) or put them aside (`gtide stash`), then re-run `"+command+"`")
 	}
 	return nil
 }
 
-func integrationFailure(ctx context.Context, repo *repository.Repository, strategy string, cause error) error {
+// IntegrationFailure turns a failed merge or rebase into the error that says how to go on.
+func IntegrationFailure(ctx context.Context, repo *repository.Repository, strategy string, cause error) error {
 	op, _ := repo.InProgressOperation(ctx)
 	if op != "" {
 		verb := op
