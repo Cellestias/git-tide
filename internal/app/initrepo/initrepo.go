@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	remoteapp "github.com/cellestias/git-tide/internal/app/remote"
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/config"
 	"github.com/cellestias/git-tide/internal/domain/branch"
@@ -24,6 +25,9 @@ type Options struct {
 	NoHooks bool
 	// Provider is "auto" (default), "github" or "gitlab".
 	Provider string
+	// Remote is a URL to register as the remote (named after .tide.yml, else
+	// "origin") before anything else, so the provider is detected from it.
+	Remote string
 }
 
 type Result struct {
@@ -38,6 +42,11 @@ type Result struct {
 	// secret.tide.yml was already ignored.
 	IgnoreCreated bool
 	IgnoreUpdated bool
+	// RemoteName and RemoteURL are set when Options.Remote was given; RemoteAdded is
+	// false when the remote already pointed there.
+	RemoteName  string
+	RemoteURL   string
+	RemoteAdded bool
 	// Notes are things the user should know, such as a flag that was not applied.
 	Notes        []string
 	HooksDir     string
@@ -123,6 +132,17 @@ func Run(ctx context.Context, repo *repository.Repository, opts Options) (Result
 		return res, err
 	}
 
+	if opts.Remote != "" {
+		res.RemoteName = remoteapp.DefaultName
+		if loaded.Found && loaded.Config.Remote != "" {
+			res.RemoteName = loaded.Config.Remote
+		}
+		res.RemoteURL = strings.TrimSpace(opts.Remote)
+		if res.RemoteAdded, err = remoteapp.Ensure(ctx, repo, res.RemoteName, opts.Remote); err != nil {
+			return res, err
+		}
+	}
+
 	if loaded.Found {
 		res.Base = loaded.Config.Branches.DefaultBase
 		res.Provider = loaded.Config.Provider
@@ -186,6 +206,12 @@ func chooseBase(ctx context.Context, repo *repository.Repository, explicit strin
 		}
 		if ok {
 			return candidate, nil
+		}
+	}
+	// A repository with no commit has no branch yet, only the name HEAD will take.
+	if started, err := repo.HasCommits(ctx); err == nil && !started {
+		if b := repo.UnbornBranch(ctx); b != "" && branch.ValidName(b) == nil {
+			return b, nil
 		}
 	}
 	return "main", nil
