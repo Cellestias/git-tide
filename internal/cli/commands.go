@@ -381,6 +381,7 @@ func (e *env) branchCmd() *cobra.Command {
 			return branches.Run(cmd.Context(), repo, cfg, gh, opts, e.p)
 		},
 	}
+	cmd.AddCommand(e.branchManageCmds()...)
 	f := cmd.Flags()
 	f.BoolVar(&opts.Remote, "remote", false, "also list branches that only exist on the remote (fetches first)")
 	f.BoolVar(&opts.Provider, "hosted", false, "add a GITHUB/GITLAB column: branch protection and open pull/merge request (provider token for private repos)")
