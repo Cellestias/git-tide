@@ -20,7 +20,7 @@ Read-only commands can print JSON for programs: the VS Code extension, scripts, 
 | `gtide diff --json [--staged] [--patch] [-f path]` | object |
 | `gtide branch --json [--remote] [--hosted] ...` | array |
 | `gtide history --json [...] [--patch] [--graph] [--all-branches]` | array |
-| `gtide history show <commit> --json` | object |
+| `gtide history show <commit> --json [--patch]` | object |
 | `gtide history --summary --json` | array |
 | `gtide history --compare <from> <to> --json` | object |
 | `gtide tag --json [-n limit]` | array |
@@ -96,7 +96,7 @@ Read-only commands can print JSON for programs: the VS Code extension, scripts, 
 
 - `patch` and `patch_truncated` appear only with `--patch`. With `-f` the patch holds only that file's lines, following renames, so a file's history reads as the commits and their changes.
 - A patch is cut at 256 KiB per commit; `patch_truncated` is then `true` (and absent otherwise).
-- `history show` adds `body` and a full-length `hash`.
+- `history show` adds `body` and a full-length `hash`; with `--patch` it adds `patch` and `patch_truncated` too (a merge commit shows its changes against the first parent).
 
 With `--graph` (which needs `--json`) each commit also carries its topology, for drawing a commit graph:
 
@@ -134,4 +134,4 @@ With `--graph` (which needs `--json`) each commit also carries its topology, for
 
 ## Checking the version
 
-`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph` and `--all-branches` need **v1.7.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
+`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `history --json` and `history show --json` exist since v1.4.0.

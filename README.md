@@ -456,6 +456,7 @@ gtide history v1.3.2..v1.4.0                             # what a release added
 gtide history --summary --since 1m                       # commits per author
 gtide history --all-branches --merges                    # every branch at once
 gtide history show 1a2b3c4                               # one commit, with the files it changed
+gtide history show 1a2b3c4 --patch                       # ...and what it changed
 ```
 
 | Flag | Effect |
