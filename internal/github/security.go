@@ -39,7 +39,7 @@ func (c *Client) SecurityAlerts(ctx context.Context, repo Repo) (SecurityReport,
 		{provider.SourceDependabot, "/dependabot/alerts?state=open", decodeDependabot},
 		{provider.SourceCodeScanning, "/code-scanning/alerts?state=open", decodeCodeScanning},
 	} {
-		alerts, truncated, err := c.alertList(ctx, src.name, c.repoURL(repo)+src.path, src.decode)
+		alerts, truncated, err := c.alertList(ctx, src.name, c.repoURL(repo), c.repoURL(repo)+src.path, src.decode)
 		switch {
 		case errors.Is(err, errNotEnabled):
 			rep.Sources = append(rep.Sources, SourceResult{Source: src.name, Enabled: false})
@@ -59,13 +59,13 @@ var errNotEnabled = errors.New("not enabled")
 
 // alertList reads one list, following the Link header GitHub sends for the
 // next page (Dependabot alerts use cursors, so a page number would not work).
-func (c *Client) alertList(ctx context.Context, source, endpoint string, decode func(json.RawMessage) (SecurityAlert, bool, error)) (alerts []SecurityAlert, truncated bool, err error) {
+func (c *Client) alertList(ctx context.Context, source, repoURL, endpoint string, decode func(json.RawMessage) (SecurityAlert, bool, error)) (alerts []SecurityAlert, truncated bool, err error) {
 	next := endpoint
 	for page := 1; next != ""; page++ {
 		if page > securityMaxPages {
 			return alerts, true, nil
 		}
-		body, link, err := c.securityGet(ctx, source, next)
+		body, link, err := c.securityGet(ctx, source, repoURL, next)
 		if err != nil {
 			return nil, false, err
 		}
@@ -114,7 +114,7 @@ func (c *Client) sameHost(next string) string {
 // repository" from "I could not read it", which the generic helper cannot: both
 // come as 403 or 404 and only the message differs. Errors never carry the token
 // or the URL.
-func (c *Client) securityGet(ctx context.Context, source, endpoint string) (body []byte, link string, err error) {
+func (c *Client) securityGet(ctx context.Context, source, repoURL, endpoint string) (body []byte, link string, err error) {
 	hdr := map[string]string{
 		"Accept":               "application/vnd.github+json",
 		"X-GitHub-Api-Version": "2022-11-28",
@@ -147,9 +147,15 @@ func (c *Client) securityGet(ctx context.Context, source, endpoint string) (body
 		if source == provider.SourceCodeScanning && strings.Contains(msg, "no analysis found") {
 			return nil, "", errNotEnabled
 		}
-		// GitHub answers 404 both for a private repository the token cannot see and, for
-		// Dependabot, when its alerts are off: the two cannot be told apart.
-		return nil, "", fmt.Errorf("GitHub answered \"not found\" for the %s alerts: the token cannot see this repository, or %s are not enabled on it%s", sourceLabel(source), sourceLabel(source)+" alerts", hint)
+		// GitHub answers 404 both for a repository the token cannot see and for alerts that are
+		// off. Asking for the repository itself tells them apart.
+		switch c.repoVisible(ctx, repoURL, hdr) {
+		case visibleYes:
+			return nil, "", errNotEnabled // the token sees the repository, so the alerts are simply not there
+		case visibleNo:
+			return nil, "", fmt.Errorf("GitHub does not show this repository to the token (the alerts answer \"not found\" because the repository does: a fine-grained token needs the organisation as its resource owner and the repository selected, and the organisation may have to approve it; a classic token needs access to the organisation)%s", hint)
+		}
+		return nil, "", fmt.Errorf("GitHub answered \"not found\" for the %s alerts: the token cannot see this repository, or %s alerts are not enabled on it%s", sourceLabel(source), sourceLabel(source), hint)
 	case http.StatusUnauthorized:
 		return nil, "", fmt.Errorf("GitHub rejected the token (401): it is invalid, expired or revoked")
 	case http.StatusForbidden, http.StatusTooManyRequests:
@@ -175,6 +181,30 @@ func permissionNeeded(source string) string {
 		return "fine-grained: Code scanning alerts, Read; classic: security_events"
 	}
 	return "fine-grained: Dependabot alerts, Read; classic: security_events"
+}
+
+type visibility int
+
+const (
+	visibleUnknown visibility = iota
+	visibleYes
+	visibleNo
+)
+
+// repoVisible asks GitHub for the repository itself: 200 means the token can
+// see it, 404 that it cannot. Anything else leaves the question open.
+func (c *Client) repoVisible(ctx context.Context, repoURL string, hdr map[string]string) visibility {
+	resp, err := httpx.Do(ctx, c.HTTP, httpx.Request{Method: http.MethodGet, URL: repoURL, Header: hdr}, httpx.DefaultPolicy)
+	if err != nil {
+		return visibleUnknown
+	}
+	switch resp.Status {
+	case http.StatusOK:
+		return visibleYes
+	case http.StatusNotFound:
+		return visibleNo
+	}
+	return visibleUnknown
 }
 
 func sourceLabel(source string) string {

@@ -240,7 +240,6 @@ func TestWhatCannotBeReadIsReportedAsAFailureOfThatSource(t *testing.T) {
 	}{
 		{"token rejected", 401, `{"message":"Bad credentials"}`, nil, "rejected the token (401): it is invalid, expired or revoked"},
 		{"no rights", 403, `{"message":"Resource not accessible by personal access token"}`, nil, "fine-grained: Dependabot alerts, Read; classic: security_events"},
-		{"hidden repository or alerts off", 404, `{"message":"Not Found"}`, nil, "the token cannot see this repository, or Dependabot alerts are not enabled on it"},
 		{"rate limit", 403, `{"message":"API rate limit exceeded"}`, map[string]string{"X-RateLimit-Remaining": "0"}, "rate limit"},
 		{"single sign-on", 403, `{"message":"Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization."}`, nil, "requires single sign-on: authorize the token"},
 		{"server error", 500, `{}`, nil, "status 500"},
@@ -303,4 +302,66 @@ func TestAnAlertThatIsNotOpenIsLeftOut(t *testing.T) {
 
 func TestClientIsASecurityReader(t *testing.T) {
 	var _ provider.SecurityReader = (*Client)(nil)
+}
+
+// repoAnswer serves the repository itself, and 404 for the alert lists, as GitHub does for a token that
+// cannot see a private repository and for alerts that are off.
+func repoAnswer(t *testing.T, repoStatus int) (*server, *Client) {
+	t.Helper()
+	return newServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/repos/acme/tool") {
+			if repoStatus == 200 {
+				reply(w, 200, `{"full_name":"acme/tool","private":true}`)
+			} else {
+				reply(w, repoStatus, `{"message":"Not Found"}`)
+			}
+			return
+		}
+		reply(w, 404, `{"message":"Not Found"}`)
+	})
+}
+
+func TestA404ForARepositoryTheTokenCannotSeeIsSaidAsSuch(t *testing.T) {
+	_, c := repoAnswer(t, 404)
+	rep, _ := c.SecurityAlerts(t.Context(), tool)
+	if len(rep.Unverified()) != 2 {
+		t.Fatalf("both sources are failures when the repository is hidden: %+v", rep.Sources)
+	}
+	for _, s := range rep.Sources {
+		msg := s.Err.Error()
+		for _, want := range []string{"does not show this repository to the token", "resource owner", "approve"} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("%s: %q lacks %q", s.Source, msg, want)
+			}
+		}
+		if strings.Contains(msg, "sekret-token") || strings.Contains(msg, "http://") {
+			t.Errorf("%s leaks the token or the URL: %v", s.Source, msg)
+		}
+	}
+}
+
+func TestA404ForARepositoryTheTokenSeesMeansTheAlertsAreOff(t *testing.T) {
+	s, c := repoAnswer(t, 200)
+	rep, _ := c.SecurityAlerts(t.Context(), tool)
+	if len(rep.Unverified()) != 0 || len(rep.Alerts) != 0 || !rep.NothingChecked() {
+		t.Fatalf("a visible repository with no alert lists is simply not using them: %+v", rep)
+	}
+	asked := 0
+	for _, u := range s.seen {
+		if strings.HasSuffix(u, "/repos/acme/tool") {
+			asked++
+		}
+	}
+	if asked != 2 {
+		t.Errorf("the repository is looked up once per source that answered 404, got %d", asked)
+	}
+}
+
+func TestA404WhenTheRepositoryCheckCannotAnswerStaysAmbiguous(t *testing.T) {
+	_, c := repoAnswer(t, 500)
+	rep, _ := c.SecurityAlerts(t.Context(), tool)
+	err := result(rep, provider.SourceDependabot).Err
+	if err == nil || !strings.Contains(err.Error(), "the token cannot see this repository, or Dependabot alerts are not enabled on it") {
+		t.Errorf("error = %v", err)
+	}
 }
