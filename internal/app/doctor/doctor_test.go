@@ -133,3 +133,49 @@ func TestCheckJSON(t *testing.T) {
 		t.Error("level names")
 	}
 }
+
+func TestProviderTokenFromDotenvIsNotMissing(t *testing.T) {
+	ctx := context.Background()
+	const name = "TIDE_DOCTOR_TEST_TOKEN"
+	dir := testutil.NewRepo(t)
+	testutil.WriteFile(t, dir, "secret.tide.yml", "provider_token: ${"+name+"}\n")
+	testutil.WriteFile(t, dir, ".gitignore", "secret.tide.yml\n.env\n")
+	token := func() (Level, string) {
+		for _, c := range Run(ctx, executor.Exec{}, dir) {
+			if c.Name == "provider token" {
+				return c.Level, c.Detail
+			}
+		}
+		return -1, ""
+	}
+
+	if level, detail := token(); level != Warn || !strings.Contains(detail, "is not set") {
+		t.Fatalf("no token anywhere: %v %q", level, detail)
+	}
+	testutil.WriteFile(t, dir, ".env", name+"=abc123\n")
+	if level, detail := token(); level != OK || !strings.Contains(detail, "read from .env") {
+		t.Errorf("in .env: %v %q (Tide reads it from there, so it is not missing)", level, detail)
+	}
+	testutil.WriteFile(t, dir, ".env", "OTHER=abc123\n")
+	if level, _ := token(); level != Warn {
+		t.Errorf("another key in .env is not this token: %v", level)
+	}
+	testutil.WriteFile(t, dir, ".env", name+"=\n")
+	if level, _ := token(); level != Warn {
+		t.Errorf("an empty value is not a token: %v", level)
+	}
+
+	// a .env that Git tracks is refused by Tide, so it does not make the token available
+	testutil.WriteFile(t, dir, ".env", name+"=abc123\n")
+	testutil.Run(t, dir, "add", "-f", ".env")
+	testutil.Commit(t, dir, "chore: oops")
+	if level, _ := token(); level != Warn {
+		t.Errorf("a tracked .env is not used: %v", level)
+	}
+
+	// the environment still wins, and then there is nothing to say
+	t.Setenv(name, "from-env")
+	if level, _ := token(); level != -1 {
+		t.Errorf("set in the environment: no check expected, got level %v", level)
+	}
+}

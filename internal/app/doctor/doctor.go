@@ -16,6 +16,7 @@ import (
 	"github.com/cellestias/git-tide/internal/config"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/domain/security"
+	"github.com/cellestias/git-tide/internal/dotenv"
 	"github.com/cellestias/git-tide/internal/git/executor"
 	"github.com/cellestias/git-tide/internal/git/hooks"
 	"github.com/cellestias/git-tide/internal/git/repository"
@@ -201,7 +202,12 @@ func secretFileChecks(ctx context.Context, repo *repository.Repository, _ execut
 		out = append(out, Check{Level: OK, Name: config.SecretFileName, Detail: "present and git-ignored"})
 	}
 	if v, _ := local.Local.TokenVar(); v != "" && os.Getenv(v) == "" {
-		out = append(out, Check{Level: Warn, Name: "provider token", Detail: "$" + v + " is not set", Hint: "export it, or put it in .env (git-ignored)"})
+		if fromDotenv(ctx, repo, v) {
+			// Tide reads the variable from .env when the environment does not have it: that is a token that works.
+			out = append(out, Check{Level: OK, Name: "provider token", Detail: "$" + v + " is read from .env"})
+		} else {
+			out = append(out, Check{Level: Warn, Name: "provider token", Detail: "$" + v + " is not set", Hint: "export it, or put it in .env (git-ignored)"})
+		}
 	}
 	return out
 }
@@ -239,4 +245,15 @@ func envFileChecks(ctx context.Context, repo *repository.Repository) []Check {
 			Hint: "add .env to .gitignore"}}
 	}
 	return []Check{{Level: OK, Name: ".env", Detail: "present and git-ignored"}}
+}
+
+// fromDotenv reports whether .env at the root gives name a value that Tide would
+// use: a .env that Git tracks is refused, since the token in it is exposed.
+func fromDotenv(ctx context.Context, repo *repository.Repository, name string) bool {
+	values, err := dotenv.Read(filepath.Join(repo.Root, ".env"), name)
+	if err != nil || values[name] == "" {
+		return false
+	}
+	tracked, err := repo.IsTracked(ctx, ".env")
+	return err == nil && !tracked
 }
