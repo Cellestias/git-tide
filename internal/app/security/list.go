@@ -41,7 +41,7 @@ func List(ctx context.Context, prov provider.Provider, repo provider.Repo, level
 		if report.NothingChecked() {
 			// not a green tick: nothing is being looked at, so "no alerts" would mislead
 			p.Warn("Nothing is being checked on %s: %s", repo, notEnabledText(report))
-			p.Note("turn Dependabot alerts on in the repository's settings (under Advanced Security or Code security); code scanning on a private repository needs GitHub Advanced Security")
+			p.Note("turn Dependabot alerts on in the repository's settings (Settings, Advanced Security); code scanning on a private repository also needs GitHub Code Security, a paid add-on")
 			return nil
 		}
 		p.Success("No open security alerts on %s%s", repo, notEnabledNote(report))

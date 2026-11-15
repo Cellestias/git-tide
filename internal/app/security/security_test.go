@@ -365,7 +365,7 @@ func TestWhenNothingIsEnabledTheListDoesNotPretendTheRepositoryIsClean(t *testin
 	if strings.Contains(o.stdout.String()+o.stderr.String(), "✓") || strings.Contains(o.stdout.String()+o.stderr.String(), "No open security alerts") {
 		t.Errorf("no green tick when nothing is looked at:\n%s%s", o.stdout.String(), o.stderr.String())
 	}
-	for _, want := range []string{"Nothing is being checked on acme/tool: Dependabot and code scanning are not enabled there", "Dependabot alerts on", "GitHub Advanced Security"} {
+	for _, want := range []string{"Nothing is being checked on acme/tool: Dependabot and code scanning are not enabled there", "Dependabot alerts on", "GitHub Code Security"} {
 		if !strings.Contains(o.stderr.String(), want) {
 			t.Errorf("missing %q in:\n%s", want, o.stderr.String())
 		}
