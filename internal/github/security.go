@@ -156,6 +156,9 @@ func (c *Client) securityGet(ctx context.Context, source, endpoint string) (body
 		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
 			return nil, "", fmt.Errorf("GitHub API rate limit exceeded; retry later")
 		}
+		if strings.Contains(msg, "saml") {
+			return nil, "", fmt.Errorf("the organisation requires single sign-on: authorize the token for it (GitHub, Settings, Developer settings, Personal access tokens, Configure SSO)")
+		}
 		for _, off := range []string{"disabled", "not enabled", "must be enabled", "advanced security"} {
 			if strings.Contains(msg, off) {
 				return nil, "", errNotEnabled

@@ -3,6 +3,7 @@ package security
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cellestias/git-tide/internal/provider"
@@ -175,5 +176,17 @@ func TestRankAndCounts(t *testing.T) {
 	c := Counts([]provider.SecurityAlert{alert("high", "a", 1), alert("High", "b", 2), alert("low", "c", 3)})
 	if c["high"] != 2 || c["low"] != 1 || c["critical"] != 0 {
 		t.Errorf("counts = %v", c)
+	}
+}
+
+func TestDescribeSaysWhatEachLevelDoes(t *testing.T) {
+	for l, want := range map[Level]string{
+		Off: "off: nothing", Low: "low: warns at push, never blocks",
+		Medium: "medium: warns at commit and push, blocks a push while a critical alert is open",
+		High:   "high: warns at commit, blocks a push while any alert is open",
+	} {
+		if got := l.Describe(); !strings.Contains(got, want) {
+			t.Errorf("%s: %q does not contain %q", l, got, want)
+		}
 	}
 }

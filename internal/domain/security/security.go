@@ -39,6 +39,19 @@ func ParseLevel(s string) (Level, bool) {
 	return Off, false
 }
 
+// Describe says in a sentence what the level does.
+func (l Level) Describe() string {
+	switch l {
+	case Low:
+		return "low: warns at push, never blocks"
+	case Medium:
+		return "medium: warns at commit and push, blocks a push while a critical alert is open"
+	case High:
+		return "high: warns at commit, blocks a push while any alert is open or cannot be checked"
+	}
+	return "off: nothing is checked at commit or push"
+}
+
 // Stage is the moment an alert check runs.
 type Stage int
 

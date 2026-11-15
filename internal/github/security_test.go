@@ -242,6 +242,7 @@ func TestWhatCannotBeReadIsReportedAsAFailureOfThatSource(t *testing.T) {
 		{"no rights", 403, `{"message":"Resource not accessible by personal access token"}`, nil, "fine-grained: Dependabot alerts, Read; classic: security_events"},
 		{"hidden repository or alerts off", 404, `{"message":"Not Found"}`, nil, "the token cannot see this repository, or Dependabot alerts are not enabled on it"},
 		{"rate limit", 403, `{"message":"API rate limit exceeded"}`, map[string]string{"X-RateLimit-Remaining": "0"}, "rate limit"},
+		{"single sign-on", 403, `{"message":"Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization."}`, nil, "requires single sign-on: authorize the token"},
 		{"server error", 500, `{}`, nil, "status 500"},
 	}
 	for _, tc := range tests {
