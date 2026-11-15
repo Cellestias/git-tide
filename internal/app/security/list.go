@@ -66,6 +66,16 @@ func details(p output.Printer, level sec.Level, report provider.SecurityReport, 
 		open[a.Source]++
 	}
 	row := func(label, format string, args ...any) { p.Info("%-16s"+format, append([]any{label}, args...)...) }
+	for _, g := range sec.Fixes(alerts) {
+		switch {
+		case g.UpgradeTo == "":
+			row("to fix", "%s: %s has no fixed version yet (%d alert%s)", clean(g.Path, 120), clean(g.Package, 60), len(g.Alerts), plural(len(g.Alerts)))
+		case g.Unfixed > 0:
+			row("to fix", "%s: upgrade %s to %s or later (%d alert%s; %d have no fix yet)", clean(g.Path, 120), clean(g.Package, 60), clean(g.UpgradeTo, 40), len(g.Alerts), plural(len(g.Alerts)), g.Unfixed)
+		default:
+			row("to fix", "%s: upgrade %s to %s or later (%d alert%s)", clean(g.Path, 120), clean(g.Package, 60), clean(g.UpgradeTo, 40), len(g.Alerts), plural(len(g.Alerts)))
+		}
+	}
 	for _, s := range report.Sources {
 		switch {
 		case s.Err != nil:
@@ -142,6 +152,16 @@ type jsonSource struct {
 	Open    int    `json:"open"` // open alerts from this source
 }
 
+// jsonFix is what to do about one package: the upgrade that fixes its alerts.
+type jsonFix struct {
+	Path      string `json:"path"`
+	Package   string `json:"package"`
+	Severity  string `json:"severity"` // the highest of its alerts
+	Alerts    int    `json:"alerts"`
+	UpgradeTo string `json:"upgrade_to"` // empty when no alert has a patched version
+	Unfixed   int    `json:"unfixed"`    // alerts with no patched version yet
+}
+
 // jsonPush says whether a push from here would be held back by the level.
 type jsonPush struct {
 	WouldBlock bool `json:"would_block"`
@@ -157,15 +177,19 @@ func writeJSON(p output.Printer, prov provider.Provider, repo provider.Repo, lev
 		Level     string         `json:"level"`
 		Alerts    []jsonAlert    `json:"alerts"`
 		Counts    map[string]int `json:"counts"`
+		Fixes     []jsonFix      `json:"fixes"`
 		Sources   []jsonSource   `json:"sources"`
 		Push      jsonPush       `json:"push"`
 		Truncated bool           `json:"truncated"`
-	}{Provider: prov.Name(), Repo: repo.String(), Level: string(level), Alerts: []jsonAlert{}, Counts: map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}, Sources: []jsonSource{}, Truncated: report.Truncated}
+	}{Provider: prov.Name(), Repo: repo.String(), Level: string(level), Alerts: []jsonAlert{}, Fixes: []jsonFix{}, Counts: map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}, Sources: []jsonSource{}, Truncated: report.Truncated}
 	for k, v := range sec.Counts(alerts) {
 		out.Counts[k] = v
 	}
 	for _, a := range alerts {
 		out.Alerts = append(out.Alerts, jsonAlert{a.Source, a.Number, a.Severity, clean(a.Title, 300), a.Package, a.Path, a.Line, a.FixedIn, a.URL})
+	}
+	for _, g := range sec.Fixes(alerts) {
+		out.Fixes = append(out.Fixes, jsonFix{g.Path, g.Package, g.Severity, len(g.Alerts), g.UpgradeTo, g.Unfixed})
 	}
 	d := sec.Decide(level, sec.StagePush, report, nil)
 	out.Push = jsonPush{WouldBlock: d.Block, Blockers: len(d.Blockers), Unverified: d.UnverifiedBlocks}

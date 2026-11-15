@@ -706,7 +706,7 @@ On GitHub, Tide can look at the repository's open **Dependabot** alerts (vulnera
 | `medium` | lists the alerts | lists them; **blocks while a critical alert is open** |
 | `high` | lists the alerts | lists them; **blocks while any alert is open**, and when the alerts cannot be checked |
 
-At every level the alerts are listed with their severity, the **file** each one is about (the `package.json`, `go.mod` or lockfile that holds the dependency, or the file and line of a code scanning finding), and the fixed version when there is one. A commit is never undone or refused because of an alert: the list only warns.
+In a warning (at commit and at push) the Dependabot alerts of one package in one file are folded into a single line with the upgrade that fixes them all, so twelve alerts on two packages read as two tasks (`gtide security` lists every alert, and a `to fix` line per package). At every level the alerts are listed with their severity, the **file** each one is about (the `package.json`, `go.mod` or lockfile that holds the dependency, or the file and line of a code scanning finding), and the fixed version when there is one. A commit is never undone or refused because of an alert: the list only warns.
 
 ```text
 $ gtide push
@@ -753,7 +753,8 @@ What Tide says, and what it means:
 |---|---|---|
 | `GitHub rejected the token (401)` | GitHub does not accept the token at all: it is wrong, expired or revoked. A missing permission never causes a 401. | Make a new token, and check **which** one Tide uses: `provider_token` in `secret.tide.yml`, then `GITHUB_TOKEN`, `GH_TOKEN`, then `.env`. An old value left in your shell is the usual cause. |
 | `GitHub denied access to the ... alerts (403)` | The token is accepted but is not allowed to read that source. | Give it the permissions in the table above. |
-| `... answered "not found" for the Dependabot alerts` | GitHub answers 404 both for a private repository the token cannot see and for a repository where Dependabot alerts are off. | Check that the token has access to the repository, and that Dependabot alerts are turned on in the repository's settings (under Advanced Security or Code security, depending on the GitHub version). |
+| `GitHub does not show this repository to the token` | GitHub answers 404 for a private repository the token cannot see. Tide asks for the repository itself to be sure, so this message means the token really cannot see it. | For a fine-grained token: make the **organisation** the resource owner, select the repository, and have an organisation owner approve the token if it asks for approval. For a classic token: authorise it for the organisation's single sign-on. |
+| `... answered "not found" for the Dependabot alerts: the token cannot see this repository, or ...` | Only when Tide could not check the repository itself (network, rate limit). | Retry; if it persists, check the token as in the row above. |
 | `no token is set` | There is no token at all. | Set one (see above). |
 
 `gtide security` shows which of the two sources (Dependabot, code scanning) could be read. A source that is simply not enabled on the repository is not an error, but when **both** are off Tide does not say "no alerts": it warns that nothing is being checked (and `gtide push` says so at every level), because an empty list from a repository nobody is scanning is not a clean bill of health. Dependabot alerts are turned on in the repository's *Settings, Advanced Security*. Code scanning is free on public repositories; on a private one it needs **GitHub Code Security**, a paid add-on (GitHub Team or Enterprise). Turn it on under *Settings, Advanced Security, CodeQL analysis, Set up, Default* (GitHub Actions must be enabled), and give it a few minutes: until the first analysis has run, GitHub answers as if code scanning were off.
@@ -767,6 +768,19 @@ gtide security --json   # the same as JSON (see docs/json.md)
 
 ```text
 $ gtide security
+12 open security alerts on acme/tool (4 high, 8 medium)
+SEVERITY  SOURCE      FILE            WHAT                                           LINK
+HIGH      dependabot  backend/go.mod  go:golang.org/x/net: HTTP/2 rapid reset ...    https://github.com/...
+...                                   (one line per alert)
+  to fix          backend/go.mod: upgrade go:golang.org/x/net to 0.55.0 or later (7 alerts)
+  to fix          package.json: upgrade npm:lodash to 4.18.0 or later (5 alerts)
+  checked         Dependabot: 12 open
+  not checked     code scanning: not enabled on this repository (...)
+  level           low: warns at push, never blocks
+  push            would go through
+  alerts          read from the default branch; a fix shows as resolved once it is merged there
+
+$ gtide security     # on a repository with nothing open
 ✓ No open security alerts on acme/tool
   checked         Dependabot: 0 open
   not checked     code scanning: not enabled on this repository (free on public repositories; a private one needs GitHub Code Security, a paid add-on, then Settings, Advanced Security, CodeQL analysis)

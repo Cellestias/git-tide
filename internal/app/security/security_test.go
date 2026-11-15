@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -239,7 +240,9 @@ func TestTextFromTheProviderCannotInjectTerminalCodes(t *testing.T) {
 func TestLongListsAreCut(t *testing.T) {
 	var many []provider.SecurityAlert
 	for i := 1; i <= 30; i++ {
-		many = append(many, alert("low", "go.mod", i))
+		a := alert("low", "go.mod", i)
+		a.Package = fmt.Sprintf("npm:pkg%d", i) // distinct packages: nothing to fold into a group
+		many = append(many, a)
 	}
 	var o out
 	_ = gate(sec.Low, &fakeProvider{report: provider.SecurityReport{Alerts: many, Truncated: true}}, &o)(t.Context(), sec.StagePush, nil)
@@ -566,5 +569,139 @@ func TestTouchedOnTheBaseBranchAndWithoutABase(t *testing.T) {
 	// an unreadable revision never panics: it just yields nothing, so the check is stricter
 	if got := Touched(ctx, repo, cfg, "origin", "fix/deps", "--nonsense"); len(got) != 0 {
 		t.Errorf("bad rev: %v", got)
+	}
+}
+
+// twelve is what the real GitHub gave the scratch repository: 12 alerts on 2 packages.
+func twelve() []provider.SecurityAlert {
+	var a []provider.SecurityAlert
+	n := 0
+	add := func(pkg, path, sev, fixed string) {
+		n++
+		a = append(a, provider.SecurityAlert{Source: provider.SourceDependabot, Number: n, Severity: sev, Path: path, Package: pkg, FixedIn: fixed, Title: "advisory " + fmt.Sprint(n)})
+	}
+	add("go:golang.org/x/net", "backend/go.mod", "high", "0.17.0")
+	for _, v := range []string{"0.13.0", "0.17.0", "0.23.0", "0.36.0", "0.38.0", "0.55.0"} {
+		add("go:golang.org/x/net", "backend/go.mod", "medium", v)
+	}
+	for _, v := range []string{"4.17.21", "4.17.19", "4.18.0"} {
+		add("npm:lodash", "package.json", "high", v)
+	}
+	add("npm:lodash", "package.json", "medium", "4.17.21")
+	add("npm:lodash", "package.json", "medium", "4.17.23")
+	return a
+}
+
+func TestAWarningFoldsAPackageIntoOneLineWithTheUpgrade(t *testing.T) {
+	var o out
+	_ = gate(sec.Low, &fakeProvider{report: provider.SecurityReport{Alerts: twelve()}}, &o)(t.Context(), sec.StagePush, nil)
+	text := o.stderr.String()
+	if !strings.Contains(text, "12 open security alerts on acme/tool (4 high, 8 medium)") {
+		t.Errorf("the heading still counts every alert:\n%s", text)
+	}
+	for _, want := range []string{
+		"HIGH  backend/go.mod  go:golang.org/x/net: 7 alerts, upgrade to 0.55.0 or later",
+		"HIGH  package.json    npm:lodash: 5 alerts, upgrade to 4.18.0 or later",
+		"(`gtide security` lists every alert)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in:\n%s", want, text)
+		}
+	}
+	if rows := strings.Count(text, "HIGH") + strings.Count(text, "MEDIUM"); rows != 2 {
+		t.Errorf("12 alerts on 2 packages must be 2 rows, got %d:\n%s", rows, text)
+	}
+	if strings.Contains(text, "advisory") {
+		t.Errorf("a group does not list its alerts:\n%s", text)
+	}
+}
+
+func TestAGroupSaysWhenSomeOrAllOfItHasNoFix(t *testing.T) {
+	mk := func(fixed ...string) []provider.SecurityAlert {
+		var a []provider.SecurityAlert
+		for i, f := range fixed {
+			a = append(a, provider.SecurityAlert{Source: provider.SourceDependabot, Number: i + 1, Severity: "high", Path: "package.json", Package: "npm:x", FixedIn: f})
+		}
+		return a
+	}
+	for name, tc := range map[string]struct {
+		alerts []provider.SecurityAlert
+		want   string
+	}{
+		"some":  {mk("1.2.0", ""), "npm:x: 2 alerts, upgrade to 1.2.0 or later (1 have no fix yet)"},
+		"none":  {mk("", ""), "npm:x: 2 alerts, no fixed version yet"},
+		"alone": {mk("1.2.0"), "npm:x: "},
+	} {
+		var o out
+		_ = gate(sec.Low, &fakeProvider{report: provider.SecurityReport{Alerts: tc.alerts}}, &o)(t.Context(), sec.StagePush, nil)
+		if !strings.Contains(o.stderr.String(), tc.want) {
+			t.Errorf("%s: missing %q in:\n%s", name, tc.want, o.stderr.String())
+		}
+	}
+	// a lone alert keeps its own line, with its title
+	var o out
+	one := mk("1.2.0")
+	one[0].Title = "Prototype pollution"
+	_ = gate(sec.Low, &fakeProvider{report: provider.SecurityReport{Alerts: one}}, &o)(t.Context(), sec.StagePush, nil)
+	if !strings.Contains(o.stderr.String(), "npm:x: Prototype pollution (fixed in 1.2.0)") || strings.Contains(o.stderr.String(), "lists every alert") {
+		t.Errorf("a lone alert is not folded:\n%s", o.stderr.String())
+	}
+}
+
+func TestCodeScanningFindingsAreNeverFolded(t *testing.T) {
+	var alerts []provider.SecurityAlert
+	for i := 1; i <= 3; i++ {
+		alerts = append(alerts, provider.SecurityAlert{Source: provider.SourceCodeScanning, Number: i, Severity: "high", Path: "src/a.js", Line: i * 10, Title: fmt.Sprintf("finding %d", i)})
+	}
+	// the same number in the other source must not be taken for the same alert
+	alerts = append(alerts, provider.SecurityAlert{Source: provider.SourceDependabot, Number: 1, Severity: "low", Path: "package.json", Package: "npm:y", Title: "dep"})
+	var o out
+	_ = gate(sec.Low, &fakeProvider{report: provider.SecurityReport{Alerts: alerts}}, &o)(t.Context(), sec.StagePush, nil)
+	for _, want := range []string{"src/a.js:10", "src/a.js:20", "src/a.js:30", "code-scanning: finding 2", "npm:y: dep"} {
+		if !strings.Contains(o.stderr.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, o.stderr.String())
+		}
+	}
+}
+
+func TestTheListSaysWhatToFixAndTheJSONHasIt(t *testing.T) {
+	r := provider.SecurityReport{Alerts: twelve(), Sources: []provider.SourceResult{{Source: provider.SourceDependabot, Enabled: true}, {Source: provider.SourceCodeScanning, Enabled: false}}}
+	var o out
+	if err := List(t.Context(), &fakeProvider{report: r}, acme, sec.Low, false, o.printer()); err != nil {
+		t.Fatal(err)
+	}
+	text := o.stdout.String()
+	for _, want := range []string{
+		"to fix          backend/go.mod: upgrade go:golang.org/x/net to 0.55.0 or later (7 alerts)",
+		"to fix          package.json: upgrade npm:lodash to 4.18.0 or later (5 alerts)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in:\n%s", want, text)
+		}
+	}
+	if !strings.Contains(text, "advisory 1") || !strings.Contains(text, "advisory 12") {
+		t.Errorf("the table still lists every alert:\n%s", text)
+	}
+	var j out
+	_ = List(t.Context(), &fakeProvider{report: r}, acme, sec.Low, true, j.printer())
+	var got struct {
+		Fixes []struct {
+			Path, Package, Severity string
+			Alerts                  int
+			UpgradeTo               string `json:"upgrade_to"`
+			Unfixed                 int
+		}
+	}
+	if err := json.Unmarshal(j.stdout.Bytes(), &got); err != nil || len(got.Fixes) != 2 {
+		t.Fatalf("err=%v fixes=%+v", err, got.Fixes)
+	}
+	if f := got.Fixes[0]; f.Package != "go:golang.org/x/net" || f.UpgradeTo != "0.55.0" || f.Alerts != 7 || f.Severity != "high" {
+		t.Errorf("fix 0 = %+v", f)
+	}
+	// without alerts there is nothing to fix, and the list is empty, never null
+	j = out{}
+	_ = List(t.Context(), &fakeProvider{report: provider.SecurityReport{Sources: []provider.SourceResult{{Source: provider.SourceDependabot, Enabled: true}}}}, acme, sec.Low, true, j.printer())
+	if !strings.Contains(j.stdout.String(), `"fixes": []`) {
+		t.Errorf("empty fixes must be []:\n%s", j.stdout.String())
 	}
 }

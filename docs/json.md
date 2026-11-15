@@ -154,6 +154,9 @@ With `--graph` (which needs `--json`) each commit also carries its topology, for
     }
   ],
   "counts": { "critical": 1, "high": 0, "medium": 0, "low": 0 },
+  "fixes": [
+    { "path": "package.json", "package": "npm:lodash", "severity": "critical", "alerts": 5, "upgrade_to": "4.18.0", "unfixed": 0 }
+  ],
   "sources": [
     { "source": "dependabot", "status": "ok", "message": "", "open": 1 },
     { "source": "code-scanning", "status": "not_enabled", "message": "", "open": 0 }
@@ -164,6 +167,7 @@ With `--graph` (which needs `--json`) each commit also carries its topology, for
 ```
 
 - `alerts` are the open ones, most severe first. `source` is `dependabot` or `code-scanning`; `severity` is `critical`, `high`, `medium` or `low` (a code scanning finding without a security severity is mapped from its rule: error is high, warning medium, note low). `path` is the file the alert is about, empty when the provider gives none; `line` is 0 when unknown; `package` and `fixed_in` are empty for code scanning.
+- `fixes` is what to do about the Dependabot alerts, one entry per package and manifest, most severe first: `alerts` is how many it has, `upgrade_to` the lowest version that fixes all of those that have a patched version (empty when none has), and `unfixed` how many have no patched version yet. Code scanning findings are not in it, since they are not a dependency to upgrade.
 - `level` is the configured `security.level` (`off`, `low`, `medium` or `high`). The command works at every level.
 - `sources` says how each source went: `ok`, `not_enabled` (the repository does not use it: nothing to list, not a failure) or `error` (it could not be read; `message` says why); `open` is how many alerts that source has. `counts` always has the four severities.
 - `push` says what the configured level would do to a push from here: `would_block` is true when alerts that the level blocks are open (`blockers` of them) or, at `high`, when a source could not be read (`unverified`). It does not know which files the push will change, so it is the verdict before the exemption for a fix. When every source is `not_enabled`, nothing is being checked: the document is valid and `alerts` is empty, but that is not a clean bill of health.

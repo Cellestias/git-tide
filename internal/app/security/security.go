@@ -206,24 +206,72 @@ func affected(alerts []provider.SecurityAlert) string {
 	return strings.Join(paths, " or ")
 }
 
-// render writes one line per alert: severity, the file (with the line), what it
-// is. It writes to w, which is stderr for warnings and stdout for the listing.
+// render writes the alerts a person has to act on, one line each: severity, the
+// file (with the line), what it is. Dependabot alerts of the same package in the
+// same manifest are one line with the upgrade that fixes them all, so twelve
+// alerts on two packages read as two tasks. It writes to w, stderr for warnings.
 func render(w io.Writer, alerts []provider.SecurityAlert, max int) {
-	shown := alerts
+	type line struct {
+		rank              int
+		severity, loc, in string
+		path              string
+	}
+	var lines []line
+	type id struct {
+		source string
+		number int
+	}
+	grouped := map[id]bool{} // the alerts folded into a group
+	collapsed := false
+	for _, g := range sec.Groups(alerts) {
+		for _, a := range g.Alerts {
+			grouped[id{a.Source, a.Number}] = true
+		}
+		collapsed = true
+		lines = append(lines, line{sec.Rank(g.Severity), g.Severity, clean(g.Path, 120), groupText(g), g.Path})
+	}
+	for _, a := range alerts {
+		if !grouped[id{a.Source, a.Number}] {
+			lines = append(lines, line{sec.Rank(a.Severity), a.Severity, location(a), what(a), a.Path})
+		}
+	}
+	sort.SliceStable(lines, func(i, j int) bool {
+		if lines[i].rank != lines[j].rank {
+			return lines[i].rank > lines[j].rank
+		}
+		return lines[i].path < lines[j].path
+	})
+	shown := lines
 	if max > 0 && len(shown) > max {
 		shown = shown[:max]
 	}
 	wsev, wloc := 0, 0
-	for _, a := range shown {
-		wsev = maxInt(wsev, len(a.Severity))
-		wloc = maxInt(wloc, len(location(a)))
+	for _, l := range shown {
+		wsev = maxInt(wsev, len(l.severity))
+		wloc = maxInt(wloc, len(l.loc))
 	}
-	for _, a := range shown {
-		_, _ = fmt.Fprintf(w, "    %-*s  %-*s  %s\n", wsev, strings.ToUpper(a.Severity), wloc, location(a), what(a))
+	for _, l := range shown {
+		_, _ = fmt.Fprintf(w, "    %-*s  %-*s  %s\n", wsev, strings.ToUpper(l.severity), wloc, l.loc, l.in)
 	}
-	if len(alerts) > len(shown) {
-		_, _ = fmt.Fprintf(w, "    ... and %d more (`gtide security` lists them all)\n", len(alerts)-len(shown))
+	switch {
+	case len(lines) > len(shown):
+		_, _ = fmt.Fprintf(w, "    ... and %d more (`gtide security` lists every alert)\n", len(lines)-len(shown))
+	case collapsed:
+		_, _ = fmt.Fprintf(w, "    (`gtide security` lists every alert)\n")
 	}
+}
+
+// groupText is the line of a package with several alerts: how many, and the
+// upgrade that fixes all of them.
+func groupText(g sec.Group) string {
+	text := fmt.Sprintf("%s: %d alerts", clean(g.Package, 60), len(g.Alerts))
+	switch {
+	case g.UpgradeTo == "":
+		return text + ", no fixed version yet"
+	case g.Unfixed > 0:
+		return fmt.Sprintf("%s, upgrade to %s or later (%d have no fix yet)", text, clean(g.UpgradeTo, 40), g.Unfixed)
+	}
+	return fmt.Sprintf("%s, upgrade to %s or later", text, clean(g.UpgradeTo, 40))
 }
 
 func location(a provider.SecurityAlert) string {
