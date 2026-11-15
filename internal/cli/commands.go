@@ -792,24 +792,39 @@ func (e *env) prStatusCmd() *cobra.Command {
 }
 
 func (e *env) doctorCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Diagnose repository, configuration, Git, and hook setup",
-		Args:  maxArgs(0),
+		Long: "Check the Git version, the repository, .tide.yml, the remote and provider, secret.tide.yml and .env (ignored, not tracked),\n" +
+			"the security level, and the installed hooks. It changes nothing. Exit code 1 when a check fails; warnings do not fail it.\n" +
+			"--json prints every check as JSON on stdout, with the same exit code.",
+		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			checks := doctor.Run(cmd.Context(), e.ex, e.dir)
 			failed := false
-			for _, c := range doctor.Run(cmd.Context(), e.ex, e.dir) {
-				switch c.Level {
-				case doctor.OK:
-					e.p.Success("%s: %s", c.Name, c.Detail)
-				case doctor.Warn:
-					e.p.Line("%s %s: %s", e.p.Yellow("!"), c.Name, c.Detail)
-				case doctor.Fail:
+			for _, c := range checks {
+				if c.Level == doctor.Fail {
 					failed = true
-					e.p.Line("%s %s: %s", e.p.Red("✗"), c.Name, c.Detail)
 				}
-				if c.Hint != "" && c.Level != doctor.OK {
-					e.p.Line("    %s", e.p.Dim("hint: "+c.Hint))
+			}
+			if asJSON {
+				if err := doctor.WriteJSON(e.p, checks); err != nil {
+					return err
+				}
+			} else {
+				for _, c := range checks {
+					switch c.Level {
+					case doctor.OK:
+						e.p.Success("%s: %s", c.Name, c.Detail)
+					case doctor.Warn:
+						e.p.Line("%s %s: %s", e.p.Yellow("!"), c.Name, c.Detail)
+					case doctor.Fail:
+						e.p.Line("%s %s: %s", e.p.Red("✗"), c.Name, c.Detail)
+					}
+					if c.Hint != "" && c.Level != doctor.OK {
+						e.p.Line("    %s", e.p.Dim("hint: "+c.Hint))
+					}
 				}
 			}
 			if failed {
@@ -818,6 +833,8 @@ func (e *env) doctorCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the checks as JSON on stdout")
+	return cmd
 }
 
 func (e *env) configCmd() *cobra.Command {
