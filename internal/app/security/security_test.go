@@ -260,11 +260,20 @@ func TestListShowsTheAlertsAndTheSources(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, o.stdout.String())
 		}
 	}
-	// with nothing open it says which source is off
+	// with nothing open it says so, and which source is off, as separate facts
 	o = out{}
 	f.report.Alerts = nil
-	if err := List(t.Context(), f, acme, sec.Off, false, o.printer()); err != nil || !strings.Contains(o.stdout.String()+o.stderr.String(), "No open security alerts on acme/tool (code scanning is not enabled there)") {
-		t.Errorf("err=%v\n%s%s", err, o.stdout.String(), o.stderr.String())
+	if err := List(t.Context(), f, acme, sec.Off, false, o.printer()); err != nil {
+		t.Fatal(err)
+	}
+	text := o.stdout.String() + o.stderr.String()
+	for _, want := range []string{"✓ No open security alerts on acme/tool\n", "checked         Dependabot: 0 open", "not checked     code scanning: not enabled on this repository", "level           off: nothing is checked", "push            security.level is off: nothing is blocked"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "(code scanning is not enabled there)") {
+		t.Errorf("the note must not hide in a parenthesis:\n%s", text)
 	}
 }
 
@@ -362,31 +371,113 @@ func TestWhenNothingIsEnabledTheListDoesNotPretendTheRepositoryIsClean(t *testin
 	if err := List(t.Context(), &fakeProvider{report: bothOff()}, acme, sec.Low, false, o.printer()); err != nil {
 		t.Fatalf("not enabled is not a failure: %v", err)
 	}
-	if strings.Contains(o.stdout.String()+o.stderr.String(), "✓") || strings.Contains(o.stdout.String()+o.stderr.String(), "No open security alerts") {
-		t.Errorf("no green tick when nothing is looked at:\n%s%s", o.stdout.String(), o.stderr.String())
+	all := o.stdout.String() + o.stderr.String()
+	if strings.Contains(all, "✓") || strings.Contains(all, "No open security alerts") {
+		t.Errorf("no green tick when nothing is looked at:\n%s", all)
 	}
-	for _, want := range []string{"Nothing is being checked on acme/tool: Dependabot and code scanning are not enabled there", "Dependabot alerts on", "GitHub Code Security"} {
-		if !strings.Contains(o.stderr.String(), want) {
-			t.Errorf("missing %q in:\n%s", want, o.stderr.String())
+	if !strings.Contains(o.stderr.String(), "! Nothing is being checked on acme/tool: no source of alerts is enabled there") {
+		t.Errorf("the headline is a warning:\n%s", o.stderr.String())
+	}
+	for _, want := range []string{
+		"not checked     Dependabot: not enabled on this repository (turn it on in the repository's Settings, Advanced Security)",
+		"not checked     code scanning: not enabled on this repository (free on public repositories; a private one needs GitHub Code Security",
+		"level           low: warns at push, never blocks",
+		"push            would go through (there is nothing to check)",
+	} {
+		if !strings.Contains(o.stdout.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, o.stdout.String())
 		}
 	}
 
-	// with one source on, "no alerts" is true, and the other one is named in the singular
+	// with one source on, "no alerts" is true; the other one is a separate fact
 	o = out{}
 	one := provider.SecurityReport{Sources: []provider.SourceResult{{Source: provider.SourceDependabot, Enabled: true}, {Source: provider.SourceCodeScanning, Enabled: false}}}
-	if err := List(t.Context(), &fakeProvider{report: one}, acme, sec.Low, false, o.printer()); err != nil || !strings.Contains(o.stdout.String(), "No open security alerts on acme/tool (code scanning is not enabled there)") {
-		t.Errorf("err=%v\n%s%s", err, o.stdout.String(), o.stderr.String())
+	if err := List(t.Context(), &fakeProvider{report: one}, acme, sec.Low, false, o.printer()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"✓ No open security alerts on acme/tool\n", "checked         Dependabot: 0 open", "not checked     code scanning: not enabled on this repository", "push            would go through\n"} {
+		if !strings.Contains(o.stdout.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, o.stdout.String())
+		}
 	}
 
-	// the JSON says the same thing in data: both sources not_enabled, and an empty list
+	// the JSON says the same thing in data: both sources not_enabled, an empty list, and the push verdict
 	o = out{}
 	_ = List(t.Context(), &fakeProvider{report: bothOff()}, acme, sec.Low, true, o.printer())
 	var got struct {
-		Sources []struct{ Source, Status string }
-		Alerts  []any
+		Sources []struct {
+			Source, Status string
+			Open           int
+		}
+		Alerts []any
+		Push   struct {
+			WouldBlock bool `json:"would_block"`
+			Blockers   int
+			Unverified bool
+		}
 	}
-	if err := json.Unmarshal(o.stdout.Bytes(), &got); err != nil || len(got.Alerts) != 0 || got.Sources[0].Status != "not_enabled" || got.Sources[1].Status != "not_enabled" {
+	if err := json.Unmarshal(o.stdout.Bytes(), &got); err != nil || len(got.Alerts) != 0 || got.Sources[0].Status != "not_enabled" || got.Sources[1].Status != "not_enabled" || got.Push.WouldBlock {
 		t.Errorf("err=%v got=%+v", err, got)
+	}
+}
+
+func TestTheListSaysWhetherAPushFromHereWouldBeBlocked(t *testing.T) {
+	r := provider.SecurityReport{
+		Alerts: []provider.SecurityAlert{alert("critical", "package.json", 1), alert("high", "backend/go.mod", 2)},
+		Sources: []provider.SourceResult{
+			{Source: provider.SourceDependabot, Enabled: true},
+			{Source: provider.SourceCodeScanning, Enabled: false},
+		},
+	}
+	for level, want := range map[sec.Level]string{
+		sec.Off:    "push            security.level is off: nothing is blocked",
+		sec.Low:    "push            would go through\n",
+		sec.Medium: "push            would be BLOCKED by 1 alert (1 critical); a push that changes package.json is allowed so the fix can be sent",
+		sec.High:   "push            would be BLOCKED by 2 alerts (1 critical, 1 high); a push that changes backend/go.mod or package.json is allowed so the fix can be sent",
+	} {
+		var o out
+		if err := List(t.Context(), &fakeProvider{report: r}, acme, level, false, o.printer()); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(o.stdout.String(), want) {
+			t.Errorf("%s: missing %q in:\n%s", level, want, o.stdout.String())
+		}
+		if !strings.Contains(o.stdout.String(), "checked         Dependabot: 2 open") || !strings.Contains(o.stdout.String(), "read from the default branch") {
+			t.Errorf("%s: the facts are missing:\n%s", level, o.stdout.String())
+		}
+	}
+
+	// the JSON carries the verdict too
+	var o out
+	_ = List(t.Context(), &fakeProvider{report: r}, acme, sec.High, true, o.printer())
+	var got struct {
+		Push struct {
+			WouldBlock bool `json:"would_block"`
+			Blockers   int
+		}
+		Sources []struct{ Open int }
+	}
+	if err := json.Unmarshal(o.stdout.Bytes(), &got); err != nil || !got.Push.WouldBlock || got.Push.Blockers != 2 || got.Sources[0].Open != 2 {
+		t.Errorf("err=%v got=%+v\n%s", err, got, o.stdout.String())
+	}
+
+	// a source that failed is its own fact, and at high it is what holds the push
+	failed := provider.SecurityReport{Sources: []provider.SourceResult{
+		{Source: provider.SourceDependabot, Enabled: true},
+		{Source: provider.SourceCodeScanning, Enabled: true, Err: errors.New("denied\x1b[31m")},
+	}}
+	o = out{}
+	if err := List(t.Context(), &fakeProvider{report: failed}, acme, sec.High, false, o.printer()); err != nil {
+		t.Fatal(err)
+	}
+	all := o.stdout.String() + o.stderr.String()
+	if strings.Contains(all, "✓") || strings.Contains(all, "\x1b") {
+		t.Errorf("a partial answer is not a green tick, and control characters never reach the terminal:\n%q", all)
+	}
+	for _, want := range []string{"! No open alerts found on acme/tool, but not everything could be read", "could not read  code scanning: denied", "would be BLOCKED: the alerts could not be fully checked"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("missing %q in:\n%s", want, all)
+		}
 	}
 }
 

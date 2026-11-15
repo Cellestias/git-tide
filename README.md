@@ -765,6 +765,18 @@ gtide security          # the open alerts, most severe first, with their files
 gtide security --json   # the same as JSON (see docs/json.md)
 ```
 
+```text
+$ gtide security
+✓ No open security alerts on acme/tool
+  checked         Dependabot: 0 open
+  not checked     code scanning: not enabled on this repository (free on public repositories; a private one needs GitHub Code Security, a paid add-on, then Settings, Advanced Security, CodeQL analysis)
+  level           low: warns at push, never blocks
+  push            would go through
+  alerts          read from the default branch; a fix shows as resolved once it is merged there
+```
+
+Besides the alerts, it says what was looked at (`checked`), what was not and why (`not checked`, `could not read`), what the configured level does, and whether a push from here would be held back. A source that is not enabled is a note, not a problem: the exit code stays 0.
+
 It works at every level, even `off`: the level decides when Tide warns and what it blocks; this command only looks. It fails (exit 5) when none of the sources could be read, so a script can tell "no alerts" from "could not look". `gtide doctor` shows the configured level and whether it can work with your provider.
 
 ## Authentication

@@ -155,16 +155,18 @@ With `--graph` (which needs `--json`) each commit also carries its topology, for
   ],
   "counts": { "critical": 1, "high": 0, "medium": 0, "low": 0 },
   "sources": [
-    { "source": "dependabot", "status": "ok", "message": "" },
-    { "source": "code-scanning", "status": "not_enabled", "message": "" }
+    { "source": "dependabot", "status": "ok", "message": "", "open": 1 },
+    { "source": "code-scanning", "status": "not_enabled", "message": "", "open": 0 }
   ],
+  "push": { "would_block": true, "blockers": 1, "unverified": false },
   "truncated": false
 }
 ```
 
 - `alerts` are the open ones, most severe first. `source` is `dependabot` or `code-scanning`; `severity` is `critical`, `high`, `medium` or `low` (a code scanning finding without a security severity is mapped from its rule: error is high, warning medium, note low). `path` is the file the alert is about, empty when the provider gives none; `line` is 0 when unknown; `package` and `fixed_in` are empty for code scanning.
 - `level` is the configured `security.level` (`off`, `low`, `medium` or `high`). The command works at every level.
-- `sources` says how each source went: `ok`, `not_enabled` (the repository does not use it: nothing to list, not a failure) or `error` (it could not be read; `message` says why). `counts` always has the four severities.
+- `sources` says how each source went: `ok`, `not_enabled` (the repository does not use it: nothing to list, not a failure) or `error` (it could not be read; `message` says why); `open` is how many alerts that source has. `counts` always has the four severities.
+- `push` says what the configured level would do to a push from here: `would_block` is true when alerts that the level blocks are open (`blockers` of them) or, at `high`, when a source could not be read (`unverified`). It does not know which files the push will change, so it is the verdict before the exemption for a fix. When every source is `not_enabled`, nothing is being checked: the document is valid and `alerts` is empty, but that is not a clean bill of health.
 - If **no** source could be read the command fails (exit 5) instead of printing an empty document, so "no alerts" and "could not look" are never confused. A failure of only one source still prints the document, with that source as `error`.
 - `truncated` is true when there are more alerts than Tide reads (1000 per source).
 - GitHub only: on another provider the command fails with exit 3.

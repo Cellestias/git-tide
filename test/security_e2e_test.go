@@ -317,6 +317,21 @@ func TestSecurityLevelsEndToEnd(t *testing.T) {
 		if code != 0 || !strings.Contains(out, "2 open security alerts on acme/tool") || !strings.Contains(out, "backend/go.mod") || !strings.Contains(out, "CRITICAL") {
 			t.Fatalf("security: %d\n%s", code, out)
 		}
+		for _, want := range []string{
+			"checked         Dependabot: 2 open",
+			"not checked     code scanning: not enabled on this repository",
+			"level           off: nothing is checked",
+			"push            security.level is off: nothing is blocked",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("missing %q in:\n%s", want, out)
+			}
+		}
+		setLevel("high")
+		if out, _ := run(dir, "security"); !strings.Contains(out, "would be BLOCKED by 2 alerts (1 critical, 1 high); a push that changes backend/go.mod or package.json is allowed") {
+			t.Errorf("at high the command says what a push would do:\n%s", out)
+		}
+		setLevel("off")
 		raw, code := stdout(t, dir, "security", "--json") // no token: the stdout helper has none
 		if code != 5 {
 			t.Fatalf("without a token the command must fail (exit 5), got %d\n%s", code, raw)
@@ -330,12 +345,23 @@ func TestSecurityLevelsEndToEnd(t *testing.T) {
 			Level  string
 			Alerts []struct{ Severity, Path, Package string }
 			Counts map[string]int
+			Push   struct {
+				WouldBlock bool `json:"would_block"`
+				Blockers   int
+			}
+			Sources []struct {
+				Source, Status string
+				Open           int
+			}
 		}
 		if err := json.Unmarshal([]byte(jsonPart(cmd)), &doc); err != nil {
 			t.Fatalf("not JSON: %v\n%s", err, cmd)
 		}
 		if doc.Repo != "acme/tool" || doc.Level != "off" || len(doc.Alerts) != 2 || doc.Alerts[0].Severity != "critical" || doc.Alerts[0].Path != "package.json" || doc.Counts["high"] != 1 {
 			t.Errorf("doc = %+v", doc)
+		}
+		if doc.Push.WouldBlock || len(doc.Sources) != 2 || doc.Sources[0].Open != 2 || doc.Sources[1].Status != "not_enabled" {
+			t.Errorf("at level off nothing blocks, and each source says how it went: %+v", doc)
 		}
 	})
 
