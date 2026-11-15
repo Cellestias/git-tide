@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -17,7 +19,13 @@ type LogEntry struct {
 	Date        time.Time // author date
 	Subject     string
 	Files       []FileChange // only with LogQuery.Files
+	Patch       string       // only with LogQuery.Patch: the diff of the commit, limited to LogQuery.Path
+	Truncated   bool         // Patch was cut at MaxPatchBytes
 }
+
+// MaxPatchBytes caps the patch kept for one commit, so a huge generated file
+// cannot flood the output or a program reading it.
+const MaxPatchBytes = 256 << 10
 
 // LogQuery selects commits. Rev is a fully qualified ref (refs/heads/x), so a
 // branch name can never be read as an option.
@@ -32,14 +40,28 @@ type LogQuery struct {
 	Until   string
 	Merges  bool // include merge commits
 	Files   bool // fill LogEntry.Files (one extra pass over the diffs)
+	Patch   bool // fill LogEntry.Patch with the diff of each commit (limited to Path)
 	Limit   int  // 0 means no limit
 }
 
 // Log lists commits reachable from q.Rev, newest first.
 func (r *Repository) Log(ctx context.Context, q LogQuery) ([]LogEntry, error) {
-	args := []string{"-c", "core.quotepath=false", "--literal-pathspecs", "log", "--format=%x1e%H%x00%h%x00%an%x00%ae%x00%at%x00%s"}
+	// A patch can hold any byte, so the record separator is random per call: file
+	// content cannot forge a commit boundary.
+	sep := "\x1e"
+	if q.Patch {
+		var b [12]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, err
+		}
+		sep = "\x1e" + hex.EncodeToString(b[:]) + "\x1e"
+	}
+	args := []string{"-c", "core.quotepath=false", "--literal-pathspecs", "log", "--format=" + sep + "%H%x00%h%x00%an%x00%ae%x00%at%x00%s"}
 	if q.Files {
 		args = append(args, "--numstat")
+	}
+	if q.Patch {
+		args = append(args, "--patch", "--no-color", "--no-ext-diff", "--no-textconv")
 	}
 	if q.Limit > 0 {
 		args = append(args, "-n", strconv.Itoa(q.Limit))
@@ -79,7 +101,7 @@ func (r *Repository) Log(ctx context.Context, q LogQuery) ([]LogEntry, error) {
 	}
 
 	var entries []LogEntry
-	for _, rec := range strings.Split(out, "\x1e") {
+	for _, rec := range strings.Split(out, sep) {
 		if strings.TrimSpace(rec) == "" {
 			continue
 		}
@@ -92,10 +114,32 @@ func (r *Repository) Log(ctx context.Context, q LogQuery) ([]LogEntry, error) {
 		if ts, err := strconv.ParseInt(f[4], 10, 64); err == nil {
 			e.Date = time.Unix(ts, 0)
 		}
+		if q.Patch {
+			numstat, e.Patch, e.Truncated = splitPatch(numstat)
+		}
 		e.Files = parseNumstat(numstat)
 		entries = append(entries, e)
 	}
 	return entries, nil
+}
+
+// splitPatch separates the numstat lines from the diff that follows them. A
+// numstat line starts with a digit or "-", so "diff --git" marks the patch.
+func splitPatch(text string) (numstat, patch string, truncated bool) {
+	i := 0
+	if !strings.HasPrefix(text, "diff --git ") {
+		j := strings.Index(text, "\ndiff --git ")
+		if j < 0 {
+			return text, "", false
+		}
+		i = j + 1
+	}
+	numstat, patch = text[:i], strings.TrimRight(text[i:], "\n")+"\n"
+	if len(patch) > MaxPatchBytes {
+		cut := strings.LastIndex(patch[:MaxPatchBytes], "\n") + 1
+		patch, truncated = patch[:cut], true
+	}
+	return numstat, patch, truncated
 }
 
 // parseNumstat reads `git --numstat` lines: "added<TAB>deleted<TAB>path", with

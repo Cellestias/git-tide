@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cellestias/git-tide/internal/domain/branch"
 )
@@ -129,6 +131,7 @@ func (r *Repository) RenameBranch(ctx context.Context, oldName, newName string) 
 type StashEntry struct {
 	Ref     string // stash@{0}
 	When    string // relative date
+	At      time.Time
 	Message string
 }
 
@@ -147,15 +150,19 @@ func (r *Repository) StashPush(ctx context.Context, message string, untracked bo
 
 // StashList lists the stashes, newest first.
 func (r *Repository) StashList(ctx context.Context) ([]StashEntry, error) {
-	out, err := r.git(ctx, "stash", "list", "--format=%gd%x00%cr%x00%gs")
+	out, err := r.git(ctx, "stash", "list", "--format=%gd%x00%cr%x00%gs%x00%ct")
 	if err != nil {
 		return nil, err
 	}
 	var list []StashEntry
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		f := strings.SplitN(line, "\x00", 3)
-		if len(f) == 3 {
-			list = append(list, StashEntry{Ref: f[0], When: f[1], Message: f[2]})
+		f := strings.SplitN(line, "\x00", 4)
+		if len(f) == 4 {
+			e := StashEntry{Ref: f[0], When: f[1], Message: f[2]}
+			if ts, err := strconv.ParseInt(f[3], 10, 64); err == nil {
+				e.At = time.Unix(ts, 0)
+			}
+			list = append(list, e)
 		}
 	}
 	return list, nil
@@ -178,21 +185,22 @@ type TagInfo struct {
 	Name      string
 	Annotated bool
 	Date      string
+	Commit    string // the commit the tag points at (an annotated tag is looked through)
 	Subject   string
 }
 
 // Tags lists tags, newest version first.
 func (r *Repository) Tags(ctx context.Context) ([]TagInfo, error) {
 	out, err := r.git(ctx, "tag", "--list", "--sort=-version:refname",
-		"--format=%(refname:short)%00%(objecttype)%00%(creatordate:short)%00%(subject)")
+		"--format=%(refname:short)%00%(objecttype)%00%(creatordate:short)%00%(if)%(*objectname)%(then)%(*objectname)%(else)%(objectname)%(end)%00%(subject)")
 	if err != nil {
 		return nil, err
 	}
 	var tags []TagInfo
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		f := strings.SplitN(line, "\x00", 4)
-		if len(f) == 4 {
-			tags = append(tags, TagInfo{Name: f[0], Annotated: f[1] == "tag", Date: f[2], Subject: f[3]})
+		f := strings.SplitN(line, "\x00", 5)
+		if len(f) == 5 {
+			tags = append(tags, TagInfo{Name: f[0], Annotated: f[1] == "tag", Date: f[2], Commit: f[3], Subject: f[4]})
 		}
 	}
 	return tags, nil

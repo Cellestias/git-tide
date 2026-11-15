@@ -29,7 +29,7 @@ func ValidName(name string) error {
 const DefaultLimit = 20
 
 // List prints the tags, newest version first.
-func List(ctx context.Context, repo *repository.Repository, limit int, p output.Printer) error {
+func List(ctx context.Context, repo *repository.Repository, limit int, asJSON bool, p output.Printer) error {
 	if limit < 0 {
 		return apperr.Usage("--limit must not be negative")
 	}
@@ -37,13 +37,16 @@ func List(ctx context.Context, repo *repository.Repository, limit int, p output.
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot list the tags", "", err)
 	}
-	if len(tags) == 0 {
+	if len(tags) == 0 && !asJSON {
 		p.Info("No tags yet. Create one with `gtide tag create v1.0.0`.")
 		return nil
 	}
 	total := len(tags)
 	if limit > 0 && len(tags) > limit {
 		tags = tags[:limit]
+	}
+	if asJSON {
+		return writeJSON(p, tags)
 	}
 	rows := [][]string{{"TAG", "DATE", "TYPE", "MESSAGE"}}
 	for _, t := range tags {
@@ -215,4 +218,23 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+type jsonTag struct {
+	Name      string `json:"name"`
+	Annotated bool   `json:"annotated"`
+	Date      string `json:"date"`    // YYYY-MM-DD
+	Commit    string `json:"commit"`  // full hash of the commit the tag points at
+	Message   string `json:"message"` // first line of the tag message (the commit subject for a lightweight tag)
+}
+
+func writeJSON(p output.Printer, tags []repository.TagInfo) error {
+	out := make([]jsonTag, 0, len(tags))
+	for _, t := range tags {
+		out = append(out, jsonTag{t.Name, t.Annotated, t.Date, t.Commit, t.Subject})
+	}
+	if err := p.JSON(out); err != nil {
+		return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", err)
+	}
+	return nil
 }

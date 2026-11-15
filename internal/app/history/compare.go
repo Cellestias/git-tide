@@ -347,14 +347,14 @@ func writeCompareJSON(p output.Printer, from, to, base string, picks []pick, beh
 	}{from, to, base, []jsonPick{}, []jsonCommit{}, orEmpty(overlap)}
 	for _, pk := range picks {
 		out.Ahead = append(out.Ahead, jsonPick{
-			jsonCommit:    jsonCommit{pk.entry.Hash, pk.entry.AuthorName, pk.entry.AuthorEmail, pk.entry.Date, pk.entry.Subject, []jsonFile{}},
+			jsonCommit:    jsonCommit{Hash: pk.entry.Hash, Author: pk.entry.AuthorName, Email: pk.entry.AuthorEmail, Date: pk.entry.Date, Subject: pk.entry.Subject, Files: []jsonFile{}},
 			Status:        pk.status,
 			Conflicts:     orEmpty(pk.conflicts),
 			SkippedBefore: orEmpty(pk.skippedBefore),
 		})
 	}
 	for _, e := range behind {
-		out.Behind = append(out.Behind, jsonCommit{e.Hash, e.AuthorName, e.AuthorEmail, e.Date, e.Subject, []jsonFile{}})
+		out.Behind = append(out.Behind, jsonCommit{Hash: e.Hash, Author: e.AuthorName, Email: e.AuthorEmail, Date: e.Date, Subject: e.Subject, Files: []jsonFile{}})
 	}
 	return encode(p, out)
 }

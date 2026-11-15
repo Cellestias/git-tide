@@ -2,6 +2,7 @@
 package output
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -124,4 +125,11 @@ func (p Printer) Table(rows [][]string, style func(row, col int, cell string) st
 		}
 		_, _ = fmt.Fprintln(p.Out, b.String())
 	}
+}
+
+// JSON writes v as indented JSON on Out, for programs that read the result.
+func (p Printer) JSON(v any) error {
+	enc := json.NewEncoder(p.Out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
 }

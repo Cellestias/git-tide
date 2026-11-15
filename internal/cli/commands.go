@@ -390,6 +390,7 @@ func (e *env) branchCmd() *cobra.Command {
 	f.BoolVar(&opts.Mine, "mine", false, "only branches whose last author is your git user.email")
 	f.IntVar(&stale, "stale", 0, "only branches with no commits for more than `days`")
 	f.BoolVar(&opts.Merged, "merged", false, "only branches with nothing the base branch lacks")
+	f.BoolVar(&opts.JSON, "json", false, "print JSON on stdout")
 	f.StringVar(&sortBy, "sort", branches.SortDate, "sort by date (newest first), name, or ahead (most commits ahead of base)")
 	return cmd
 }
@@ -493,6 +494,7 @@ func (e *env) historyCmd() *cobra.Command {
 			"of the branch and fetches it first. -f shows the commits that touched a file, following renames, with who made each one.\n" +
 			"A branch shows only what it adds to its base (from .tide.yml, or --base); --all shows the whole history, and so does -f.\n" +
 			"Merge commits are hidden unless --merges. --since and --until take 7d, 2w, 3m, 12h or a date (2026-01-31). --json prints JSON.\n" +
+			"--patch adds what each commit changed (with -f, only that file) to the list and to --json.\n" +
 			"--search keeps the commits whose message contains the text; --type and --scope keep the Conventional Commits of that type\n" +
 			"(feat, fix...) or scope (auth...). A range <from>..<to> (branches, tags or hashes) lists what <to> has that <from> does not,\n" +
 			"as for release notes. --summary counts the commits per author instead of listing them (it ignores --limit).\n" +
@@ -505,6 +507,7 @@ func (e *env) historyCmd() *cobra.Command {
 			"  gtide history --branch feat/remember-login --member paulo\n" +
 			"  gtide history --remote\n" +
 			"  gtide history -f src/utils/rotation_keys.py\n" +
+			"  gtide history -f src/utils/rotation_keys.py --patch   # with the changes of each commit\n" +
 			"  gtide history --me --since 7d       # what you did this week\n" +
 			"  gtide history --all --merges        # the full history, merges included\n" +
 			"  gtide history --type fix --scope auth --since 2w\n" +
@@ -516,6 +519,8 @@ func (e *env) historyCmd() *cobra.Command {
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			switch {
+			case compare && opts.Patch:
+				return apperr.Usage("--patch does not apply to --compare")
 			case compare && len(args) != 2:
 				return apperr.Usage("--compare needs two branches: gtide history --compare <from> <to>")
 			case !compare && len(args) > 1:
@@ -551,6 +556,7 @@ func (e *env) historyCmd() *cobra.Command {
 	f.StringVar(&opts.Scope, "scope", "", "only Conventional Commits of this `scope`")
 	f.BoolVar(&opts.Summary, "summary", false, "count the commits per author instead of listing them")
 	f.BoolVar(&opts.JSON, "json", false, "print JSON on stdout")
+	f.BoolVar(&opts.Patch, "patch", false, "show what each commit changed (only the file's lines with -f)")
 	f.BoolVar(&compare, "compare", false, "compare two branches: `gtide history --compare <from> <to>`")
 	cmd.AddCommand(e.historyShowCmd())
 	return cmd
