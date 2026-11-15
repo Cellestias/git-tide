@@ -390,6 +390,7 @@ func (e *env) branchCmd() *cobra.Command {
 	f.BoolVar(&opts.Mine, "mine", false, "only branches whose last author is your git user.email")
 	f.IntVar(&stale, "stale", 0, "only branches with no commits for more than `days`")
 	f.BoolVar(&opts.Merged, "merged", false, "only branches with nothing the base branch lacks")
+	f.BoolVar(&opts.JSON, "json", false, "print JSON on stdout")
 	f.StringVar(&sortBy, "sort", branches.SortDate, "sort by date (newest first), name, or ahead (most commits ahead of base)")
 	return cmd
 }

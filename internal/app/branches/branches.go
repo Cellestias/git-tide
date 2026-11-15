@@ -33,6 +33,7 @@ type Options struct {
 	StaleDays int  // only branches without commits for more than N days (0 = off)
 	Merged    bool // only branches with nothing the base lacks
 	Sort      string
+	JSON      bool      // print JSON on stdout instead of a table
 	Now       time.Time // zero means time.Now()
 }
 
@@ -136,6 +137,9 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, gh
 	var ghCol *githubInfo
 	if opts.Provider && gh != nil {
 		ghCol = loadGitHub(ctx, repo, cfg, gh, p)
+	}
+	if opts.JSON {
+		return renderJSON(p, rows, ghCol)
 	}
 	render(p, rows, ghCol, now)
 	if len(rows) == 0 {
