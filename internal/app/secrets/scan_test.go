@@ -313,3 +313,39 @@ func TestJSONListsAreNeverNull(t *testing.T) {
 		t.Errorf("stdout is the document, nothing else: stderr = %q", o.stderr.String())
 	}
 }
+
+func TestAnEnvFileGetsTheAdviceThatFitsIt(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.WriteFile(t, dir, ".env", "GITHUB_TOKEN="+githubToken+"\n")
+	o, err := scan(t, repo, domain.Default(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(o.all(), "a .env file is meant to hold secrets: add it to .gitignore") {
+		t.Errorf("an untracked .env is told to be ignored:\n%s", o.all())
+	}
+	if strings.Contains(o.all(), "use a variable instead") {
+		t.Errorf("a .env must not be told to use a variable:\n%s", o.all())
+	}
+
+	// a secret in source code keeps the usual advice, and both can appear together
+	testutil.WriteFile(t, dir, "config/.env.production", "K="+githubToken+"\n")
+	testutil.WriteFile(t, dir, "app.js", "t = '"+awsKey+"'\n")
+	o, _ = scan(t, repo, domain.Default(), Options{})
+	if !strings.Contains(o.all(), "add it to .gitignore") || !strings.Contains(o.all(), "use a variable instead") {
+		t.Errorf("both pieces of advice:\n%s", o.all())
+	}
+
+	// a .env that is committed is not "just add it to .gitignore": the secret is out, and the general advice applies
+	testutil.Run(t, dir, "add", "-f", ".env")
+	testutil.Commit(t, dir, "chore: oops")
+	repo2, dir2 := setup(t)
+	testutil.WriteFile(t, dir2, ".env", "K="+githubToken+"\n")
+	testutil.Run(t, dir2, "add", "-f", ".env")
+	testutil.Commit(t, dir2, "chore: oops")
+	o, _ = scan(t, repo2, domain.Default(), Options{})
+	if strings.Contains(o.all(), "add it to .gitignore") || !strings.Contains(o.all(), "use a variable instead") {
+		t.Errorf("a committed .env gets the general advice:\n%s", o.all())
+	}
+	_ = repo
+}

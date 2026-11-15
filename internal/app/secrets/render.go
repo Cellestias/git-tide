@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/cellestias/git-tide/internal/apperr"
@@ -86,7 +87,19 @@ func render(p output.Printer, res Result, history bool) {
 	if res.Truncated {
 		p.Warn("the scan was cut: there are more files or findings than Tide reads")
 	}
-	if len(res.Files) > 0 {
+	envFile, other := false, false
+	for _, f := range res.Files {
+		if !f.Tracked && isEnvFile(f.Path) {
+			envFile = true
+		} else {
+			other = true
+		}
+	}
+	if envFile {
+		// A .env exists to hold secrets: what is wrong is that Git can see it.
+		p.Note("a .env file is meant to hold secrets: add it to .gitignore so Git never sees it (if it was already committed, rotate what it held)")
+	}
+	if other {
 		p.Note("remove the value from the file and use a variable instead; for a false positive add tide:allow-secret to that line")
 	}
 }
@@ -134,4 +147,13 @@ func writeJSON(p output.Printer, res Result) error {
 		return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", err)
 	}
 	return nil
+}
+
+// isEnvFile reports whether path is a .env file: ".env", ".env.local", "config/.env.production"...
+func isEnvFile(path string) bool {
+	base := path
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	return base == ".env" || strings.HasPrefix(base, ".env.")
 }
