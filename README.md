@@ -730,7 +730,33 @@ When the alerts cannot be read (no network, no token, a token without rights), `
 
 The alerts are read from the repository's default branch, so a fix shows up as resolved once it is merged there.
 
-**Requirements.** GitHub only: GitLab has no alerts API Tide can read on every plan, so on a GitLab repository the level has no effect, and Tide says so instead of pretending to protect. Reading alerts needs `GITHUB_TOKEN` (or `provider_token` in `secret.tide.yml`) with the `security_events` scope, or access to the repository for a fine-grained token with *Dependabot alerts* and *Code scanning alerts* read permission. Without one, GitHub answers as if the alerts did not exist, and Tide reports that it could not look.
+**Requirements.** GitHub only: GitLab has no alerts API Tide can read on every plan, so on a GitLab repository the level has no effect, and Tide says so instead of pretending to protect. Reading alerts needs a token with the right to read them, which is **not** the same right as opening pull requests: see [The token for the alerts](#the-token-for-the-alerts).
+
+### The token for the alerts
+
+Tide reads the alerts with the same token it uses for the rest ([Where the token comes from](#where-the-token-comes-from)). It needs these rights on the repository, according to its type:
+
+| Token | What to give it |
+|---|---|
+| **Fine-grained** (recommended) | Repository access to the repository, and the repository permissions **Dependabot alerts: Read** and **Code scanning alerts: Read**. Add **Pull requests: Read and write** and **Contents: Read** if the same token is used for `gtide pr`. |
+| **Classic** | The **`security_events`** scope. `public_repo` is enough only for public repositories. For `gtide pr` it also needs `repo`. |
+
+Where to make one: GitHub, Settings, Developer settings, Personal access tokens. For an organisation's repositories, a fine-grained token must have the organisation as its resource owner (the organisation may need to approve it), and a classic token must be authorised for the organisation's single sign-on if it has one.
+
+If you reuse the GitHub CLI's login (`export GITHUB_TOKEN=$(gh auth token)`), its token may not have the scope. Add it with `gh auth refresh -h github.com -s security_events`.
+
+You also have to be someone GitHub shows the repository's security alerts to. If the **Security** tab of the repository does not list the Dependabot alerts for you in the browser, no token of yours can read them.
+
+What Tide says, and what it means:
+
+| Message | What it means | What to do |
+|---|---|---|
+| `GitHub rejected the token (401)` | GitHub does not accept the token at all: it is wrong, expired or revoked. A missing permission never causes a 401. | Make a new token, and check **which** one Tide uses: `provider_token` in `secret.tide.yml`, then `GITHUB_TOKEN`, `GH_TOKEN`, then `.env`. An old value left in your shell is the usual cause. |
+| `GitHub denied access to the ... alerts (403)` | The token is accepted but is not allowed to read that source. | Give it the permissions in the table above. |
+| `... answered "not found" for the Dependabot alerts` | GitHub answers 404 both for a private repository the token cannot see and for a repository where Dependabot alerts are off. | Check that the token has access to the repository, and that Dependabot alerts are turned on in the repository's settings (under Advanced Security or Code security, depending on the GitHub version). |
+| `no token is set` | There is no token at all. | Set one (see above). |
+
+`gtide security` shows which of the two sources (Dependabot, code scanning) could be read. A source that is simply not enabled on the repository is not an error.
 
 ### `gtide security`
 
@@ -745,7 +771,7 @@ It works at every level, even `off`: the level decides when Tide warns and what 
 
 `gtide pr` needs a token with write access to pull / merge requests; `gtide pr list`, `pr view`, `pr status`, `gtide review` and `gtide branch --hosted` only need one for private repositories (and `--author me` / `--assignee me` need one to resolve who you are). Pushing uses Git's own authentication, not this token.
 
-- **GitHub**: a fine-grained token with "Pull requests: Read and write" and "Contents: Read" on the repository, or a classic token with the `repo` scope.
+- **GitHub**: a fine-grained token with "Pull requests: Read and write" and "Contents: Read" on the repository, or a classic token with the `repo` scope. To read security alerts (`security.level`, `gtide security`) it also needs "Dependabot alerts: Read" and "Code scanning alerts: Read", or the classic `security_events` scope: see [The token for the alerts](#the-token-for-the-alerts).
 - **GitLab**: a personal, project or group access token with the `api` scope (role Developer or higher).
 
 ### `secret.tide.yml`
