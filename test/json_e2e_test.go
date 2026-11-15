@@ -69,6 +69,7 @@ func TestJSONOutputEndToEnd(t *testing.T) {
 		{[]string{"history", "--json"}, '['},
 		{[]string{"history", "--json", "-f", "a.txt", "--patch"}, '['},
 		{[]string{"history", "--json", "--summary"}, '['},
+		{[]string{"history", "--json", "--all-branches", "--graph", "--merges"}, '['},
 		{[]string{"history", "show", "HEAD", "--json"}, '{'},
 		{[]string{"history", "--json", "--compare", "feature/x", "main"}, '{'},
 		{[]string{"tag", "--json"}, '['},
@@ -81,8 +82,31 @@ func TestJSONOutputEndToEnd(t *testing.T) {
 		}
 	}
 
+	// The graph data names the parents and the refs of every commit, and is opt-in.
+	out, _ := stdout(t, dir, "history", "--json", "--all-branches", "--graph", "--merges")
+	var graph []struct {
+		FullHash string   `json:"full_hash"`
+		Parents  []string `json:"parents"`
+		Refs     []struct {
+			Name string `json:"name"`
+			Kind string `json:"kind"`
+		} `json:"refs"`
+	}
+	if err := json.Unmarshal([]byte(out), &graph); err != nil || len(graph) < 2 || len(graph[0].FullHash) != 40 {
+		t.Fatalf("graph = %+v (err %v)", graph, err)
+	}
+	if len(graph[0].Parents) != 1 || len(graph[0].Refs) == 0 || graph[0].Refs[0].Name != "feature/x" {
+		t.Errorf("newest commit = %+v", graph[0])
+	}
+	if plain, _ := stdout(t, dir, "history", "--json", "--all-branches"); strings.Contains(plain, "parents") {
+		t.Errorf("--graph data leaked into the plain JSON:\n%s", plain)
+	}
+	if out, code := stdout(t, dir, "history", "--graph"); code != 2 {
+		t.Errorf("--graph without --json: exit %d, want 2\n%s", code, out)
+	}
+
 	// The file's history carries the change of each commit.
-	out, _ := stdout(t, dir, "history", "--json", "-f", "a.txt", "--patch")
+	out, _ = stdout(t, dir, "history", "--json", "-f", "a.txt", "--patch")
 	var got []struct {
 		Subject string `json:"subject"`
 		Patch   string `json:"patch"`
