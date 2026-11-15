@@ -46,6 +46,7 @@ type Options struct {
 	Scope   string // only Conventional Commits of this scope ("auth"...)
 	Range   string // "from..to": the commits in to that are not in from
 	Summary bool   // count commits per author instead of listing them; ignores Limit
+	Patch   bool   // show what each commit changed (limited to File when given)
 }
 
 // conventional reads "type(scope)!: description" from a commit subject.
@@ -86,6 +87,9 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	}
 	if opts.Range != "" && (opts.Branch != "" || opts.Remote || opts.All || opts.Base != "") {
 		return apperr.Usage("a range cannot be combined with --branch, --remote, --all or --base")
+	}
+	if opts.Patch && opts.Summary {
+		return apperr.Usage("--patch cannot be combined with --summary")
 	}
 	opts.Search, opts.Scope = strings.TrimSpace(opts.Search), strings.TrimSpace(opts.Scope)
 
@@ -164,6 +168,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	}
 
 	q.Files = opts.JSON && !opts.Summary
+	q.Patch = opts.Patch
 	entries, err := repo.Log(ctx, q)
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot read the commit history", "", err)
@@ -184,10 +189,15 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		return summarize(p, entries, label, describe(q, opts, scope), opts.JSON)
 	}
 	if opts.JSON {
-		return writeJSON(p, entries)
+		return writeJSON(p, entries, opts.Patch)
 	}
 	if len(entries) == 0 {
 		p.Info("No commits match on %s%s", label, describe(q, opts, scope))
+		return nil
+	}
+	if opts.Patch {
+		p.Note("%d commit%s on %s%s", len(entries), plural(len(entries)), label, describe(q, opts, scope))
+		printPatches(p, entries)
 		return nil
 	}
 
@@ -359,6 +369,9 @@ type jsonCommit struct {
 	Date    time.Time  `json:"date"`
 	Subject string     `json:"subject"`
 	Files   []jsonFile `json:"files"`
+	// Patch is the diff of the commit, only with --patch; PatchTruncated says it was cut.
+	Patch          *string `json:"patch,omitempty"`
+	PatchTruncated bool    `json:"patch_truncated,omitempty"`
 }
 
 type jsonFile struct {
@@ -376,12 +389,36 @@ func toJSONFiles(files []repository.FileChange) []jsonFile {
 	return out
 }
 
-func writeJSON(p output.Printer, entries []repository.LogEntry) error {
+func writeJSON(p output.Printer, entries []repository.LogEntry, patch bool) error {
 	out := make([]jsonCommit, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, jsonCommit{e.Hash, e.AuthorName, e.AuthorEmail, e.Date, e.Subject, toJSONFiles(e.Files)})
+		c := jsonCommit{Hash: e.Hash, Author: e.AuthorName, Email: e.AuthorEmail, Date: e.Date, Subject: e.Subject, Files: toJSONFiles(e.Files)}
+		if patch {
+			patchText := e.Patch
+			c.Patch, c.PatchTruncated = &patchText, e.Truncated
+		}
+		out = append(out, c)
 	}
 	return encode(p, out)
+}
+
+// printPatches writes each commit as a header followed by its diff.
+func printPatches(p output.Printer, entries []repository.LogEntry) {
+	for i, e := range entries {
+		if i > 0 {
+			p.Line("")
+		}
+		p.Line("%s %s  %s  %s", p.Yellow(e.Hash), e.Date.Format("2006-01-02"), e.AuthorName, p.Bold(e.Subject))
+		if e.Patch == "" {
+			p.Line("%s", p.Dim("(no textual changes)"))
+			continue
+		}
+		p.Line("")
+		_, _ = fmt.Fprint(p.Out, e.Patch)
+		if e.Truncated {
+			p.Line("%s", p.Dim("... patch cut at "+strconv.Itoa(repository.MaxPatchBytes/1024)+" KiB"))
+		}
+	}
 }
 
 func encode(p output.Printer, v any) error {

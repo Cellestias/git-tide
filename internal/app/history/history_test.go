@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -409,5 +410,104 @@ func TestCompareRejectsTheNewFilters(t *testing.T) {
 		if len(incompatible(o)) != 1 {
 			t.Errorf("%+v is not rejected by --compare", o)
 		}
+	}
+}
+
+func TestPatchShowsWhatEachCommitChangedOnTheFile(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.WriteFile(t, dir, "src/rotation.py", "1\n2\n")
+	testutil.Commit(t, dir, "feat: second line")
+	out, err := run(repo, dir, Options{File: "src/rotation.py", Patch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"feat: second line", "fix: theirs", "+2", "+1", "diff --git a/src/rotation.py"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "mine.txt") {
+		t.Errorf("another file leaked into the file's patch:\n%s", out)
+	}
+}
+
+func TestPatchFollowsARenameAndStaysOnTheFile(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.Run(t, dir, "mv", "src/rotation.py", "src/rotation_keys.py")
+	testutil.Commit(t, dir, "refactor: rename")
+	out, err := run(repo, dir, Options{File: "src/rotation_keys.py", Patch: true, JSON: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []struct {
+		Subject string  `json:"subject"`
+		Patch   *string `json:"patch"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if len(got) != 2 || got[0].Subject != "refactor: rename" || got[1].Subject != "fix: theirs" {
+		t.Fatalf("commits = %+v", got)
+	}
+	if got[1].Patch == nil || !strings.Contains(*got[1].Patch, "+1") || !strings.Contains(*got[1].Patch, "src/rotation.py") {
+		t.Fatalf("patch before the rename = %v", got[1].Patch)
+	}
+}
+
+func TestPatchKeepsTabsAndRecordSeparatorsInsideTheDiff(t *testing.T) {
+	repo, dir := setup(t)
+	// A tab-separated line looks like a numstat line; \x1e is the usual record separator.
+	testutil.WriteFile(t, dir, "data.tsv", "1\t2\t3\n\x1efake record\n")
+	testutil.Commit(t, dir, "feat: data")
+	out, err := run(repo, dir, Options{File: "data.tsv", Patch: true, JSON: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []struct {
+		Files []struct{ Path string } `json:"files"`
+		Patch string                  `json:"patch"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if len(got) != 1 || len(got[0].Files) != 1 || got[0].Files[0].Path != "data.tsv" || !strings.Contains(got[0].Patch, "+1\t2\t3") {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestPatchIsCutWhenHuge(t *testing.T) {
+	repo, dir := setup(t)
+	testutil.WriteFile(t, dir, "big.txt", strings.Repeat("0123456789abcdef\n", 30000))
+	testutil.Commit(t, dir, "feat: big")
+	out, err := run(repo, dir, Options{File: "big.txt", Patch: true, JSON: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []struct {
+		Patch     string `json:"patch"`
+		Truncated bool   `json:"patch_truncated"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || len(got) != 1 {
+		t.Fatalf("err=%v out=%d bytes", err, len(out))
+	}
+	if !got[0].Truncated || len(got[0].Patch) > repository.MaxPatchBytes || !strings.HasSuffix(got[0].Patch, "\n") {
+		t.Errorf("truncated=%v len=%d", got[0].Truncated, len(got[0].Patch))
+	}
+}
+
+func TestPatchRejectsSummary(t *testing.T) {
+	repo, dir := setup(t)
+	_, err := run(repo, dir, Options{Patch: true, Summary: true})
+	var ae *apperr.Error
+	if !errors.As(err, &ae) || ae.Code != apperr.CodeUsage {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestJSONHasNoPatchFieldWithoutTheFlag(t *testing.T) {
+	repo, dir := setup(t)
+	out, err := run(repo, dir, Options{JSON: true})
+	if err != nil || strings.Contains(out, `"patch"`) {
+		t.Fatalf("err=%v\n%s", err, out)
 	}
 }
