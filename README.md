@@ -595,7 +595,22 @@ The name must be a version: `v1.4.0`, `1.4.0`, `v2.0.0-rc.1`. `create` only work
 
 ### `gtide doctor`
 
-Diagnoses the setup without changing anything: Git version, repository, configuration, remote, base branch, each hook, and whether `gtide` is on the `PATH`. Problems are shown with a hint; it exits non-zero only on hard failures (no Git, not a repository, invalid configuration).
+Diagnoses the setup without changing anything: Git version, repository, configuration, remote, base branch, `secret.tide.yml` and `.env`, whether secret scanning is on, the security level, each hook, and whether `gtide` is on the `PATH`. Problems are shown with a hint; it exits non-zero only on hard failures (no Git, not a repository, invalid configuration, a tracked `secret.tide.yml` or `.env`). A `.env` that Git does not ignore is a warning, since `gtide save` or `git add -A` would commit it. `--json` prints every check (`level`: `ok`, `warn` or `fail`, with `detail` and `hint`) on stdout, with the same exit code.
+
+### `gtide secrets scan`
+
+```bash
+gtide secrets scan                  # files that hold a likely secret, now
+gtide secrets scan --history        # ...and the commits that ever added one
+gtide secrets scan --history --limit 1000 --json
+gtide secrets scan --fail           # exit 4 when something is found, for CI
+```
+
+Scans the committed files and the new ones Git does not ignore, with the detectors the commit hook uses: the built-in ones, the custom patterns of `.tide.yml` and the local ones of `secret.tide.yml`. It shows the **file, the line and the rule, never the value**, so its output can be pasted or screenshotted. A line that carries `tide:allow-secret` is left alone.
+
+`--history` also reads what the newest commits (300 by default, `--limit` up to 5000) of every local branch, remote branch and tag added. That finds a key that was committed and removed later, and says whether it is **still in the files** or **only in the history**. A secret that was committed stays exposed even after the file is cleaned: rotate it first. Tide never rewrites history.
+
+Binary files, files over 1 MiB and symlinks are skipped, and with `secrets.enabled: false` nothing is scanned. It exits 0 when it finds something so a script can read the result; `--fail` exits 4 instead.
 
 ### `gtide config`
 

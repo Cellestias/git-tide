@@ -26,6 +26,8 @@ Read-only commands can print JSON for programs: the VS Code extension, scripts, 
 | `gtide tag --json [-n limit]` | array |
 | `gtide stash list --json` | array |
 | `gtide security --json` | object |
+| `gtide secrets scan --json [--history]` | object |
+| `gtide doctor --json` | object |
 
 ### status
 
@@ -175,6 +177,49 @@ With `--graph` (which needs `--json`) each commit also carries its topology, for
 - `truncated` is true when there are more alerts than Tide reads (1000 per source).
 - GitHub only: on another provider the command fails with exit 3.
 
+### secrets scan
+
+```json
+{
+  "disabled": false,
+  "scanned": 120,
+  "skipped": 3,
+  "files": [
+    { "path": "src/config.js", "line": 12, "rule": "github_token", "tracked": true }
+  ],
+  "history": [
+    { "commit": "1a2b3c...", "date": "2026-11-15T12:00:00+01:00", "path": "src/old.js", "line": 3, "rule": "aws_access_key_id", "in_files": false }
+  ],
+  "commits": 300,
+  "truncated": false
+}
+```
+
+- **No finding ever carries the matched text.** Only the file, the line and the rule name.
+- `files` are the likely secrets in the files as they are now. `tracked` is false for a file that is not committed (and not ignored, or it would not be scanned).
+- `history` is empty unless `--history` is given. `commit` is the full hash of the commit that added the line, `line` is its number in the file as that commit left it, and `in_files` is true when the same rule still matches in that file now, so the secret is in the work tree too and not only in the history. `commits` is how many commits were read.
+- `disabled` is true when `secrets.enabled` is false in `.tide.yml`: nothing was scanned and the lists are empty.
+- `skipped` counts files left out (binary, over 1 MiB, a line too long to read, symlinks). `truncated` is true when there are more files or findings than the scan reads (20 000 files, 500 findings).
+- The exit code is 0 even with findings; with `--fail` it is 4 when there are any.
+
+### doctor
+
+```json
+{
+  "ok": false,
+  "warnings": 1,
+  "failures": 1,
+  "checks": [
+    { "level": "ok", "name": "git", "detail": "git version 2.45.0", "hint": "" },
+    { "level": "warn", "name": ".env", "detail": "is not in .gitignore: `gtide save` or `git add -A` would commit it", "hint": "add .env to .gitignore" },
+    { "level": "fail", "name": "secret.tide.yml", "detail": "is tracked by Git", "hint": "run `git rm --cached secret.tide.yml` and commit" }
+  ]
+}
+```
+
+- `level` is `ok`, `warn` or `fail`; `ok` at the top is true when no check failed. The exit code is 1 when one did, as in the text form, **and the document is still printed**: read stdout whatever the exit code.
+- The check names are stable: `git`, `repository`, `config`, `remote`, `provider`, `secret.tide.yml`, `provider token`, `.env`, `secret scanning`, `security`, `base branch`, the hooks (`hook pre-commit`...), and `gtide on PATH`. Which ones are present depends on the repository.
+
 ## Checking the version
 
-`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `gtide security` needs **v1.8.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
+`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `gtide security` needs **v1.8.0 or later**; `gtide secrets scan` and `gtide doctor --json` need **v1.9.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
