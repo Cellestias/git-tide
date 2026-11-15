@@ -1,6 +1,9 @@
 package provider
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Sources of a security alert.
 const (
@@ -15,6 +18,15 @@ const (
 	SeverityMedium   = "medium"
 	SeverityLow      = "low"
 )
+
+// SeverityValid reports whether s is one of the severities (any case).
+func SeverityValid(s string) bool {
+	switch strings.ToLower(s) {
+	case SeverityCritical, SeverityHigh, SeverityMedium, SeverityLow:
+		return true
+	}
+	return false
+}
 
 // SecurityAlert is one open alert, whatever its source.
 type SecurityAlert struct {
