@@ -81,7 +81,7 @@ func (e *env) rootCmd() *cobra.Command {
 		RunE:          func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return apperr.Usage("%v", err) })
-	root.AddCommand(e.initCmd(), e.cloneCmd(), e.remoteCmd(), e.branchCmd(), e.changeCmd(), e.createCmd(), e.commitCmd(), e.historyCmd(), e.saveCmd(), e.statusCmd(), e.diffCmd(), e.pullCmd(), e.stashCmd(), e.tagCmd(), e.undoCmd(), e.amendCmd(), e.pushCmd(), e.updateCmd(), e.continueCmd(), e.abortCmd(), e.reviewCmd(), e.prCmd(), e.securityCmd(), e.doctorCmd(), e.configCmd(), e.hookCmd())
+	root.AddCommand(e.initCmd(), e.cloneCmd(), e.remoteCmd(), e.branchCmd(), e.changeCmd(), e.createCmd(), e.commitCmd(), e.historyCmd(), e.saveCmd(), e.statusCmd(), e.diffCmd(), e.pullCmd(), e.stashCmd(), e.tagCmd(), e.undoCmd(), e.amendCmd(), e.pushCmd(), e.updateCmd(), e.continueCmd(), e.abortCmd(), e.reviewCmd(), e.prCmd(), e.securityCmd(), e.secretsCmd(), e.doctorCmd(), e.configCmd(), e.hookCmd())
 	return root
 }
 
