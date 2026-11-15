@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	appsecurity "github.com/cellestias/git-tide/internal/app/security"
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/domain/branch"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
@@ -33,6 +34,9 @@ type Options struct {
 	// Ask reads one line of free text (the title and body prompts). Nil means
 	// non-interactive: description.pr.md is used when present, else the defaults.
 	Ask func(prompt string) (string, error)
+	// Security is the alerts check before the branch is pushed. It gets the files
+	// the push changes and may stop it. Nil means no check.
+	Security func(ctx context.Context, touched []string) error
 }
 
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, opts Options, p output.Printer) error {
@@ -84,6 +88,14 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 		p.Warn("%d file(s) have uncommitted changes; they are not part of the pull request", len(changes))
 	}
 
+	if opts.Security != nil {
+		touched := appsecurity.Touched(ctx, repo, cfg, cfg.Remote, current, "refs/heads/"+current)
+		if err := opts.Security(ctx, touched); err != nil {
+			return err
+		}
+		defer appsecurity.MarkChecked()()
+	}
+
 	title, body, err := compose(repo.Root, current, base, subjects, opts, p)
 	if err != nil {
 		return err
@@ -115,11 +127,19 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 	switch {
 	case errors.As(err, &verr):
 		// the message is remote-controlled: use the cleaned text, not the wrapped cause
-		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s rejected the %s: %s", providerLabel(c), noun, clean(verr.Message)),
-			"the branch was pushed; fix the problem and re-run `gtide pr`")
+		hint := "the branch was pushed; fix the problem and re-run `gtide pr`"
+		if strings.Contains(strings.ToLower(verr.Message), "not all refs are readable") {
+			// The token may open requests but cannot read the repository: a fine-grained token made for pull requests only.
+			hint = "the branch was pushed. The token can open " + noun + "s but cannot read the repository's contents: a fine-grained GitHub token also needs \"Contents: Read\". Add it, then re-run `gtide pr`"
+		}
+		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s rejected the %s: %s", providerLabel(c), noun, clean(verr.Message)), hint)
 	case errors.Is(err, provider.ErrNotFound):
 		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s not found or the token cannot write to it", ghRepo),
 			c.TokenEnv()+" needs "+noun+" write access; the branch was pushed")
+	case err != nil && strings.Contains(err.Error(), "(403)"):
+		// The token is accepted but may not open requests: the usual cause is one made for reading only.
+		return apperr.Wrap(apperr.CodeExternal, "cannot create "+noun,
+			"the branch was pushed. The token needs permission to write "+noun+"s: \"Pull requests: Read and write\" for a fine-grained GitHub token (with the organisation as resource owner), the repo scope for a classic one, or the api scope on GitLab. Then re-run `gtide pr`", err)
 	case err != nil:
 		return apperr.Wrap(apperr.CodeExternal, "cannot create "+noun, "the branch was pushed; re-run `gtide pr`", err)
 	}

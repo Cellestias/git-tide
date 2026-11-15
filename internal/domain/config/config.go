@@ -10,6 +10,7 @@ import (
 
 	"github.com/cellestias/git-tide/internal/domain/branch"
 	"github.com/cellestias/git-tide/internal/domain/secret"
+	"github.com/cellestias/git-tide/internal/domain/security"
 	"github.com/cellestias/git-tide/internal/provider"
 )
 
@@ -33,7 +34,22 @@ type Config struct {
 	Update   Update   `yaml:"update"`
 	Commits  Commits  `yaml:"commits"`
 	Secrets  Secrets  `yaml:"secrets"`
+	Security Security `yaml:"security"`
 	Hooks    Hooks    `yaml:"hooks"`
+}
+
+// Security is how strict Tide is about the security alerts of the repository
+// (Dependabot and code scanning on GitHub).
+//
+//	off     look nothing up (the default)
+//	low     warn at push, never block
+//	medium  warn at commit and at push; block a push while a critical alert is open
+//	high    warn at commit; block a push while any alert is open, or cannot be checked
+//
+// A push that changes the file an alert is about is always allowed, so the fix
+// can be sent.
+type Security struct {
+	Level string `yaml:"level"`
 }
 
 type Branches struct {
@@ -79,10 +95,11 @@ func Default() Config {
 			DefaultBase: "main",
 			Protected:   []string{"main"},
 		},
-		Update:  Update{Strategy: StrategyMerge},
-		Commits: Commits{Convention: ConventionConventional},
-		Secrets: Secrets{Enabled: true},
-		Hooks:   Hooks{Manage: true},
+		Update:   Update{Strategy: StrategyMerge},
+		Commits:  Commits{Convention: ConventionConventional},
+		Secrets:  Secrets{Enabled: true},
+		Security: Security{Level: string(security.Off)},
+		Hooks:    Hooks{Manage: true},
 	}
 }
 
@@ -137,6 +154,9 @@ func (c Config) Validate() error {
 	if c.Commits.Convention != ConventionConventional {
 		bad("commits.convention", "unsupported convention %q (only %q)", c.Commits.Convention, ConventionConventional)
 	}
+	if _, ok := security.ParseLevel(c.Security.Level); !ok {
+		bad("security.level", "must be off, low, medium or high, got %q", c.Security.Level)
+	}
 	errs = append(errs, ValidatePatterns("secrets.custom_patterns", c.Secrets.CustomPatterns)...)
 	errs = append(errs, ValidatePatterns("secret.tide.yml: secrets.patterns", c.Secrets.LocalPatterns)...)
 	return errors.Join(errs...)
@@ -181,6 +201,12 @@ func (c Config) SecretRules() []secret.Rule {
 		rules = append(rules, secret.Rule{Name: cp.Name, Pattern: regexp.MustCompile(cp.Pattern)})
 	}
 	return rules
+}
+
+// SecurityLevel is the validated security level; an unknown value reads as off.
+func (c Config) SecurityLevel() security.Level {
+	l, _ := security.ParseLevel(c.Security.Level)
+	return l
 }
 
 // BaseFor resolves the base branch for current.

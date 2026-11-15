@@ -4,11 +4,15 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
+	appsecurity "github.com/cellestias/git-tide/internal/app/security"
 	"github.com/cellestias/git-tide/internal/apperr"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
+	sec "github.com/cellestias/git-tide/internal/domain/security"
 	"github.com/cellestias/git-tide/internal/git/executor"
 	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/testutil"
@@ -42,16 +46,16 @@ func TestPrePush(t *testing.T) {
 	line := func(remoteRef string) *strings.Reader {
 		return strings.NewReader("refs/heads/x " + zero + " " + remoteRef + " " + zero + "\n")
 	}
-	if err := PrePush(cfg, line("refs/heads/feature/x")); err != nil {
+	if err := PrePush(context.Background(), nil, cfg, "", line("refs/heads/feature/x"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := PrePush(cfg, line("refs/tags/v1")); err != nil {
+	if err := PrePush(context.Background(), nil, cfg, "", line("refs/tags/v1"), nil); err != nil {
 		t.Fatalf("tags are not branches: %v", err)
 	}
-	if err := PrePush(cfg, strings.NewReader("\n")); err != nil {
+	if err := PrePush(context.Background(), nil, cfg, "", strings.NewReader("\n"), nil); err != nil {
 		t.Fatalf("blank input: %v", err)
 	}
-	if apperr.CodeOf(PrePush(cfg, line("refs/heads/stage"))) != apperr.CodePolicy {
+	if apperr.CodeOf(PrePush(context.Background(), nil, cfg, "", line("refs/heads/stage"), nil)) != apperr.CodePolicy {
 		t.Error("push to stage should be rejected")
 	}
 }
@@ -133,15 +137,128 @@ func TestPrePushAllowsCreatingAProtectedBranchOnTheRemote(t *testing.T) {
 	zero := strings.Repeat("0", 40)
 	sha := strings.Repeat("a", 40)
 	create := strings.NewReader("refs/heads/main " + sha + " refs/heads/main " + zero + "\n")
-	if err := PrePush(cfg, create); err != nil {
+	if err := PrePush(context.Background(), nil, cfg, "", create, nil); err != nil {
 		t.Fatalf("creating main: %v", err)
 	}
 	update := strings.NewReader("refs/heads/main " + sha + " refs/heads/main " + strings.Repeat("b", 40) + "\n")
-	if apperr.CodeOf(PrePush(cfg, update)) != apperr.CodePolicy {
+	if apperr.CodeOf(PrePush(context.Background(), nil, cfg, "", update, nil)) != apperr.CodePolicy {
 		t.Error("updating main should be rejected")
 	}
 	del := strings.NewReader("(delete) " + zero + " refs/heads/main " + sha + "\n")
-	if apperr.CodeOf(PrePush(cfg, del)) != apperr.CodePolicy {
+	if apperr.CodeOf(PrePush(context.Background(), nil, cfg, "", del, nil)) != apperr.CodePolicy {
 		t.Error("deleting main should be rejected")
+	}
+}
+
+// gateProbe records how the pre-push hook called the security gate.
+type gateProbe struct {
+	calls   int
+	stage   sec.Stage
+	touched []string
+	err     error
+}
+
+func (g *gateProbe) gate() appsecurity.Gate {
+	return func(_ context.Context, stage sec.Stage, touched []string) error {
+		g.calls++
+		g.stage, g.touched = stage, touched
+		return g.err
+	}
+}
+
+func pushedBranch(t *testing.T) (*repository.Repository, string) {
+	t.Helper()
+	dir, _ := testutil.NewRepoWithRemote(t)
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/x")
+	testutil.WriteFile(t, dir, "package.json", "{}\n")
+	testutil.WriteFile(t, dir, "src/a.go", "package a\n")
+	testutil.Commit(t, dir, "feat: x")
+	return repository.New(executor.Exec{}, dir), testutil.Run(t, dir, "rev-parse", "HEAD")
+}
+
+func TestPrePushChecksTheAlertsOnceWithTheFilesBeingPushed(t *testing.T) {
+	repo, sha := pushedBranch(t)
+	zero := strings.Repeat("0", 40)
+	in := strings.NewReader("refs/heads/feature/x " + sha + " refs/heads/feature/x " + zero + "\n" +
+		"refs/heads/feature/x " + sha + " refs/heads/other " + zero + "\n" + // a second ref: still one check
+		"refs/tags/v1 " + sha + " refs/tags/v1 " + zero + "\n")
+	var probe gateProbe
+	if err := PrePush(t.Context(), repo, domain.Default(), "origin", in, probe.gate()); err != nil {
+		t.Fatal(err)
+	}
+	if probe.calls != 1 || probe.stage != sec.StagePush {
+		t.Fatalf("calls=%d stage=%d, want one check at the push stage", probe.calls, probe.stage)
+	}
+	sort.Strings(probe.touched)
+	if !reflect.DeepEqual(probe.touched, []string{"package.json", "src/a.go"}) {
+		t.Errorf("touched = %v (each file once)", probe.touched)
+	}
+}
+
+func TestPrePushStopsWhenTheGateDoes(t *testing.T) {
+	repo, sha := pushedBranch(t)
+	probe := gateProbe{err: apperr.New(apperr.CodePolicy, "push blocked by security level high", "")}
+	in := strings.NewReader("refs/heads/feature/x " + sha + " refs/heads/feature/x " + strings.Repeat("0", 40) + "\n")
+	if err := PrePush(t.Context(), repo, domain.Default(), "origin", in, probe.gate()); apperr.CodeOf(err) != apperr.CodePolicy {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestPrePushDoesNotAskWhenThereIsNothingToCheck(t *testing.T) {
+	repo, sha := pushedBranch(t)
+	zero := strings.Repeat("0", 40)
+	for name, in := range map[string]string{
+		"a tag":            "refs/tags/v1 " + sha + " refs/tags/v1 " + zero + "\n",
+		"a deleted ref":    "(delete) " + zero + " refs/heads/feature/x " + sha + "\n",
+		"nothing":          "\n",
+		"a malformed line": "refs/heads/feature/x\n",
+	} {
+		var probe gateProbe
+		if err := PrePush(t.Context(), repo, domain.Default(), "origin", strings.NewReader(in), probe.gate()); err != nil || probe.calls != 0 {
+			t.Errorf("%s: err=%v calls=%d", name, err, probe.calls)
+		}
+	}
+	// and the protection comes first: a refused push is not worth a network call
+	var probe gateProbe
+	in := strings.NewReader("refs/heads/main " + sha + " refs/heads/main " + strings.Repeat("b", 40) + "\n")
+	if err := PrePush(t.Context(), repo, domain.Default(), "origin", in, probe.gate()); apperr.CodeOf(err) != apperr.CodePolicy || probe.calls != 0 {
+		t.Errorf("protected: err=%v calls=%d", err, probe.calls)
+	}
+}
+
+func TestPrePushSkipsTheCheckThatGtidePushJustMade(t *testing.T) {
+	repo, sha := pushedBranch(t)
+	line := "refs/heads/feature/x " + sha + " refs/heads/feature/x " + strings.Repeat("0", 40) + "\n"
+	var probe gateProbe
+	undo := appsecurity.MarkChecked()
+	if err := PrePush(t.Context(), repo, domain.Default(), "origin", strings.NewReader(line), probe.gate()); err != nil || probe.calls != 0 {
+		t.Fatalf("marked: err=%v calls=%d", err, probe.calls)
+	}
+	undo()
+	if appsecurity.AlreadyChecked() {
+		t.Fatal("the mark must be removed")
+	}
+	if err := PrePush(t.Context(), repo, domain.Default(), "origin", strings.NewReader(line), probe.gate()); err != nil || probe.calls != 1 {
+		t.Fatalf("unmarked: err=%v calls=%d", err, probe.calls)
+	}
+}
+
+func TestPrePushWithoutAGateIsAsBefore(t *testing.T) {
+	repo, sha := pushedBranch(t)
+	in := strings.NewReader("refs/heads/feature/x " + sha + " refs/heads/feature/x " + strings.Repeat("0", 40) + "\n")
+	if err := PrePush(t.Context(), repo, domain.Default(), "origin", in, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrePushAUrlCountsEveryRemote(t *testing.T) {
+	repo, sha := pushedBranch(t)
+	in := "refs/heads/feature/x " + sha + " refs/heads/feature/x " + strings.Repeat("0", 40) + "\n"
+	var probe gateProbe
+	if err := PrePush(t.Context(), repo, domain.Default(), "https://github.com/acme/tool.git", strings.NewReader(in), probe.gate()); err != nil {
+		t.Fatal(err)
+	}
+	if probe.calls != 1 || len(probe.touched) != 2 {
+		t.Errorf("calls=%d touched=%v", probe.calls, probe.touched)
 	}
 }

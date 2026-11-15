@@ -10,12 +10,14 @@ import (
 	"os"
 	"strings"
 
+	appsecurity "github.com/cellestias/git-tide/internal/app/security"
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/domain/commit"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/domain/conflict"
 	"github.com/cellestias/git-tide/internal/domain/policy"
 	"github.com/cellestias/git-tide/internal/domain/secret"
+	sec "github.com/cellestias/git-tide/internal/domain/security"
 	"github.com/cellestias/git-tide/internal/git/repository"
 )
 
@@ -106,8 +108,15 @@ func CommitMsg(cfg domain.Config, file string) error {
 
 // PrePush rejects pushes that update or delete protected branches; creating one is allowed. in carries
 // the lines Git writes to the hook: "<local ref> <local sha> <remote ref> <remote sha>".
-func PrePush(cfg domain.Config, in io.Reader) error {
+//
+// With a gate, the files the pushed branches change are collected and the security alerts are checked once,
+// unless `gtide push` or `gtide pr` just did it. remote is the first argument Git gives the hook: a remote's
+// name, or its URL.
+func PrePush(ctx context.Context, repo *repository.Repository, cfg domain.Config, remote string, in io.Reader, gate appsecurity.Gate) error {
 	prot := policy.Protection{Protected: cfg.Branches.Protected}
+	var touched []string
+	seen := map[string]bool{}
+	pushesBranch := false
 	sc := bufio.NewScanner(in)
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
@@ -120,14 +129,34 @@ func PrePush(cfg domain.Config, in io.Reader) error {
 		}
 		// Creating the branch on the remote (all-zero remote sha, real local sha) is
 		// the first publish of a new repository, not an update of protected work.
-		if isZero(fields[3]) && !isZero(fields[1]) {
-			continue
-		}
-		if d := prot.Push(name); !d.Allowed {
+		creating := isZero(fields[3]) && !isZero(fields[1])
+		if d := prot.Push(name); !creating && !d.Allowed {
 			return apperr.New(apperr.CodePolicy, d.Reason, "to bypass this local guardrail once: git push --no-verify")
 		}
+		if gate != nil && !isZero(fields[1]) { // a deletion sends no code
+			pushesBranch = true
+			if repo != nil {
+				// Only a remote's name selects its tracking refs; a URL counts every remote.
+				known := ""
+				if remote == cfg.Remote {
+					known = remote
+				}
+				for _, path := range appsecurity.Touched(ctx, repo, cfg, known, name, fields[1]) {
+					if !seen[path] {
+						seen[path] = true
+						touched = append(touched, path)
+					}
+				}
+			}
+		}
 	}
-	return sc.Err()
+	if err := sc.Err(); err != nil {
+		return err
+	}
+	if gate != nil && pushesBranch && !appsecurity.AlreadyChecked() {
+		return gate(ctx, sec.StagePush, touched)
+	}
+	return nil
 }
 
 // isZero reports whether sha is Git's all-zero "no object" id.

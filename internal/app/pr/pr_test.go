@@ -196,3 +196,72 @@ func TestDefaultBodyCapsList(t *testing.T) {
 		t.Errorf("body = %q", body)
 	}
 }
+
+func TestPRAsksTheSecurityCheckBeforePushingAndStopsWhenItDoes(t *testing.T) {
+	repo, _, bare := setup(t)
+	creator := &fakeCreator{Client: &github.Client{}}
+
+	var got []string
+	stop := apperr.New(apperr.CodePolicy, "push blocked by security level high: 1 open alert (1 critical)", "")
+	_, _, err := run(repo, creator, Options{Title: "t", Body: "b", Security: func(_ context.Context, touched []string) error {
+		got = touched
+		return stop
+	}})
+	if apperr.CodeOf(err) != apperr.CodePolicy {
+		t.Fatalf("err = %v", err)
+	}
+	if len(got) != 1 || got[0] != "login.txt" {
+		t.Errorf("the check got %v, want the file the push would send", got)
+	}
+	if creator.calls != 0 {
+		t.Error("no pull request may be opened when the push is held back")
+	}
+	if o := testutil.Run(t, bare, "branch", "--list", "feature/*"); o != "" {
+		t.Errorf("the branch reached the remote: %q", o)
+	}
+
+	// and when it passes, the request is opened as usual
+	if _, _, err := run(repo, creator, Options{Title: "t", Body: "b", Security: func(context.Context, []string) error { return nil }}); err != nil {
+		t.Fatal(err)
+	}
+	if creator.calls != 1 {
+		t.Errorf("calls = %d", creator.calls)
+	}
+}
+
+func TestPRExplainsAForbiddenToken(t *testing.T) {
+	repo, _, _ := setup(t)
+	creator := &fakeCreator{Client: &github.Client{}, err: errors.New("GitHub denied access (403); check token permissions")}
+	_, _, err := run(repo, creator, Options{Title: "t", Body: "b"})
+	if apperr.CodeOf(err) != apperr.CodeExternal {
+		t.Fatalf("err = %v", err)
+	}
+	for _, want := range []string{"the branch was pushed", "Pull requests: Read and write", "resource owner", "repo scope", "re-run `gtide pr`"} {
+		if !strings.Contains(apperr.HintOf(err), want) {
+			t.Errorf("hint lacks %q: %q", want, apperr.HintOf(err))
+		}
+	}
+	// any other failure keeps the plain hint
+	creator.err = errors.New("GitHub API returned status 500")
+	if _, _, err := run(repo, creator, Options{Title: "t", Body: "b"}); strings.Contains(apperr.HintOf(err), "Pull requests") {
+		t.Errorf("a 500 is not a token problem: %q", apperr.HintOf(err))
+	}
+}
+
+func TestPRExplainsAMissingContentsPermission(t *testing.T) {
+	repo, _, _ := setup(t)
+	creator := &fakeCreator{Client: &github.Client{}, err: &provider.ErrValidation{Message: "Validation Failed: not all refs are readable"}}
+	_, _, err := run(repo, creator, Options{Title: "t", Body: "b"})
+	h := apperr.HintOf(err)
+	for _, want := range []string{"the branch was pushed", "Contents: Read", "re-run `gtide pr`"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("hint lacks %q: %q", want, h)
+		}
+	}
+	// any other validation failure keeps the plain hint
+	creator.err = &provider.ErrValidation{Message: "A pull request already exists for acme:feature."}
+	_, _, err = run(repo, creator, Options{Title: "t", Body: "b"})
+	if strings.Contains(apperr.HintOf(err), "Contents") || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("err=%v hint=%q", err, apperr.HintOf(err))
+	}
+}

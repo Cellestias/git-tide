@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/cellestias/git-tide/internal/git/executor"
@@ -134,5 +136,94 @@ func TestUpdateBranchFromRef(t *testing.T) {
 	testutil.Commit(t, dir, "feat: b")
 	if err := repo.UpdateBranchFromRef(ctx, "copy", "refs/heads/main"); err == nil {
 		t.Fatal("non-fast-forward update must be refused")
+	}
+}
+
+func TestPushedPaths(t *testing.T) {
+	dir, bare := testutil.NewRepoWithRemote(t)
+	repo := New(executor.Exec{}, dir)
+	ctx := context.Background()
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/x")
+	testutil.WriteFile(t, dir, "a b.txt", "1\n")
+	testutil.WriteFile(t, dir, "sub/é.go", "1\n")
+	testutil.Commit(t, dir, "feat: first")
+	testutil.WriteFile(t, dir, "a b.txt", "2\n")
+	testutil.WriteFile(t, dir, "go.mod", "module x\n")
+	testutil.Commit(t, dir, "fix: second")
+
+	got, err := repo.PushedPaths(ctx, "origin", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	if want := []string{"a b.txt", "go.mod", "sub/é.go"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("a branch that is not published: %q, want %q (each path once, spaces and accents kept)", got, want)
+	}
+
+	// once the branch is on the remote, only what comes after counts
+	testutil.Run(t, dir, "push", "-q", "-u", "origin", "feature/x")
+	if got, err := repo.PushedPaths(ctx, "origin", "HEAD"); err != nil || len(got) != 0 {
+		t.Errorf("nothing left to push: %q, %v", got, err)
+	}
+	testutil.WriteFile(t, dir, "package.json", "{}\n")
+	testutil.Commit(t, dir, "feat: third")
+	if got, _ := repo.PushedPaths(ctx, "origin", "HEAD"); !reflect.DeepEqual(got, []string{"package.json"}) {
+		t.Errorf("after a push: %q", got)
+	}
+	// without a remote name every remote counts
+	if got, _ := repo.PushedPaths(ctx, "", "HEAD"); !reflect.DeepEqual(got, []string{"package.json"}) {
+		t.Errorf("any remote: %q", got)
+	}
+	_ = bare
+
+	// a rename shows both paths
+	testutil.Run(t, dir, "mv", "go.mod", "backend.mod")
+	testutil.Commit(t, dir, "refactor: rename")
+	got, _ = repo.PushedPaths(ctx, "origin", "HEAD")
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"backend.mod", "go.mod", "package.json"}) {
+		t.Errorf("rename: %q", got)
+	}
+
+	for _, bad := range [][2]string{{"origin", ""}, {"origin", "--output=/tmp/x"}, {"-x", "HEAD"}, {"a*", "HEAD"}, {"a b", "HEAD"}} {
+		if _, err := repo.PushedPaths(ctx, bad[0], bad[1]); err == nil {
+			t.Errorf("PushedPaths(%q, %q) should be refused", bad[0], bad[1])
+		}
+	}
+}
+
+func TestChangedSince(t *testing.T) {
+	dir, _ := testutil.NewRepoWithRemote(t)
+	repo := New(executor.Exec{}, dir)
+	ctx := context.Background()
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/x")
+	testutil.WriteFile(t, dir, "a.txt", "1\n")
+	testutil.Commit(t, dir, "feat: a")
+	// main moves on: its own change must not show as the branch's
+	testutil.Run(t, dir, "checkout", "-q", "main")
+	testutil.WriteFile(t, dir, "main-only.txt", "m\n")
+	testutil.Commit(t, dir, "feat: on main")
+	testutil.Run(t, dir, "checkout", "-q", "feature/x")
+	testutil.WriteFile(t, dir, "sub/é b.go", "2\n")
+	testutil.Commit(t, dir, "feat: b")
+
+	got, err := repo.ChangedSince(ctx, "refs/heads/main", "refs/heads/feature/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	if want := []string{"a.txt", "sub/é b.go"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("changed = %q, want %q (what the branch adds since the fork, not what main did)", got, want)
+	}
+	if got, err := repo.ChangedSince(ctx, "refs/heads/feature/x", "refs/heads/feature/x"); err != nil || len(got) != 0 {
+		t.Errorf("a branch against itself: %q, %v", got, err)
+	}
+	for _, bad := range [][2]string{{"", "HEAD"}, {"HEAD", ""}, {"--output=/tmp/x", "HEAD"}, {"HEAD", "-x"}} {
+		if _, err := repo.ChangedSince(ctx, bad[0], bad[1]); err == nil {
+			t.Errorf("ChangedSince(%q, %q) should be refused", bad[0], bad[1])
+		}
+	}
+	if _, err := repo.ChangedSince(ctx, "refs/heads/nope", "HEAD"); err == nil {
+		t.Error("an unknown base must be an error")
 	}
 }

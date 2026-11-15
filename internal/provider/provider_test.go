@@ -1,6 +1,9 @@
 package provider
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestDetectName(t *testing.T) {
 	cases := map[string]string{
@@ -33,6 +36,26 @@ func TestValidState(t *testing.T) {
 	for _, s := range []string{"", "opened", "OPEN", "draft"} {
 		if ValidState(s) {
 			t.Errorf("%q should be invalid", s)
+		}
+	}
+}
+
+func TestNothingChecked(t *testing.T) {
+	off := func(src string) SourceResult { return SourceResult{Source: src, Enabled: false} }
+	on := func(src string) SourceResult { return SourceResult{Source: src, Enabled: true} }
+	failed := SourceResult{Source: SourceDependabot, Enabled: true, Err: errors.New("denied")}
+	for name, tc := range map[string]struct {
+		sources []SourceResult
+		want    bool
+	}{
+		"no sources at all":           {nil, false},
+		"both off":                    {[]SourceResult{off(SourceDependabot), off(SourceCodeScanning)}, true},
+		"one on":                      {[]SourceResult{on(SourceDependabot), off(SourceCodeScanning)}, false},
+		"both on":                     {[]SourceResult{on(SourceDependabot), on(SourceCodeScanning)}, false},
+		"one off and one that failed": {[]SourceResult{off(SourceCodeScanning), failed}, false},
+	} {
+		if got := (SecurityReport{Sources: tc.sources}).NothingChecked(); got != tc.want {
+			t.Errorf("%s: NothingChecked = %v, want %v", name, got, tc.want)
 		}
 	}
 }

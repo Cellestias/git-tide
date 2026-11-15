@@ -446,6 +446,7 @@ func (e *env) pushCmd() *cobra.Command {
 			if opts.Force && !yes {
 				opts.Confirm = e.confirm
 			}
+			opts.Security = e.securityCheck(repo, cfg)
 			return push.Run(cmd.Context(), repo, cfg, opts, e.p)
 		},
 	}
@@ -472,7 +473,7 @@ func (e *env) commitCmd() *cobra.Command {
 				return err
 			}
 			opts.Cwd = e.dir
-			return appcommit.Run(cmd.Context(), repo, cfg, opts, e.p)
+			return e.commitThenAlerts(cmd.Context(), repo, cfg, opts)
 		},
 	}
 	messageFlags(cmd, &opts)
@@ -608,7 +609,7 @@ func (e *env) saveCmd() *cobra.Command {
 			}
 			opts.Everything = len(opts.Files) == 0
 			opts.Cwd = e.dir
-			return appcommit.Run(cmd.Context(), repo, cfg, opts, e.p)
+			return e.commitThenAlerts(cmd.Context(), repo, cfg, opts)
 		},
 	}
 	messageFlags(cmd, &opts)
@@ -705,6 +706,7 @@ func (e *env) prCmd() *cobra.Command {
 					opts.Ask = e.ask
 				}
 			}
+			opts.Security = e.securityCheck(repo, cfg)
 			return pr.Run(cmd.Context(), repo, cfg, client, opts, e.p)
 		},
 	}
@@ -916,8 +918,12 @@ func (e *env) hookCmd() *cobra.Command {
 	}, &cobra.Command{
 		Use:  "pre-push [remote] [url]",
 		Args: maxArgs(2),
-		RunE: hookRun(func(_ *cobra.Command, _ []string, h hookCtx) error {
-			return apphooks.PrePush(h.cfg, e.in)
+		RunE: hookRun(func(cmd *cobra.Command, args []string, h hookCtx) error {
+			remote := ""
+			if len(args) > 0 {
+				remote = args[0]
+			}
+			return apphooks.PrePush(cmd.Context(), h.repo, h.cfg, remote, e.in, e.securityGate(h.repo, h.cfg))
 		}),
 	})
 	return cmd
