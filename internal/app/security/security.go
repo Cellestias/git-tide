@@ -15,7 +15,9 @@ import (
 	"unicode"
 
 	"github.com/cellestias/git-tide/internal/apperr"
+	domain "github.com/cellestias/git-tide/internal/domain/config"
 	sec "github.com/cellestias/git-tide/internal/domain/security"
+	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/output"
 	"github.com/cellestias/git-tide/internal/provider"
 )
@@ -33,6 +35,40 @@ const (
 // hook, which would ask the same question again, knows it was just answered.
 // It only silences the hook: the command's own check is not skippable this way.
 const CheckedEnv = checkedEnvName
+
+// Touched lists the files a push of rev (the tip of branch) stands for: what
+// the push sends, and what the branch changes against its base, which is what
+// a pull request of it proposes. The second part is what lets a fix that was
+// already pushed still go through when its pull request is opened, or when a
+// later commit is pushed to the same branch. remote selects whose tracking refs
+// count as "already sent" (empty: every remote's). Anything that cannot be read
+// is left out, so a failure only ever makes the check stricter.
+func Touched(ctx context.Context, repo *repository.Repository, cfg domain.Config, remote, branch, rev string) []string {
+	seen := map[string]bool{}
+	var paths []string
+	add := func(list []string) {
+		for _, p := range list {
+			if !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	if sent, err := repo.PushedPaths(ctx, remote, rev); err == nil {
+		add(sent)
+	}
+	if base := cfg.BaseFor(branch); base != branch {
+		for _, ref := range []string{"refs/remotes/" + cfg.Remote + "/" + base, "refs/heads/" + base} {
+			if ok, err := repo.CommitExists(ctx, ref); err == nil && ok {
+				if changed, err := repo.ChangedSince(ctx, ref, rev); err == nil {
+					add(changed)
+				}
+				break
+			}
+		}
+	}
+	return paths
+}
 
 // MarkChecked tells the pre-push hook, for as long as the returned function has
 // not been called, that the check just ran. Call it before running `git push`.

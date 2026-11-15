@@ -191,3 +191,39 @@ func TestPushedPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestChangedSince(t *testing.T) {
+	dir, _ := testutil.NewRepoWithRemote(t)
+	repo := New(executor.Exec{}, dir)
+	ctx := context.Background()
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/x")
+	testutil.WriteFile(t, dir, "a.txt", "1\n")
+	testutil.Commit(t, dir, "feat: a")
+	// main moves on: its own change must not show as the branch's
+	testutil.Run(t, dir, "checkout", "-q", "main")
+	testutil.WriteFile(t, dir, "main-only.txt", "m\n")
+	testutil.Commit(t, dir, "feat: on main")
+	testutil.Run(t, dir, "checkout", "-q", "feature/x")
+	testutil.WriteFile(t, dir, "sub/é b.go", "2\n")
+	testutil.Commit(t, dir, "feat: b")
+
+	got, err := repo.ChangedSince(ctx, "refs/heads/main", "refs/heads/feature/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	if want := []string{"a.txt", "sub/é b.go"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("changed = %q, want %q (what the branch adds since the fork, not what main did)", got, want)
+	}
+	if got, err := repo.ChangedSince(ctx, "refs/heads/feature/x", "refs/heads/feature/x"); err != nil || len(got) != 0 {
+		t.Errorf("a branch against itself: %q, %v", got, err)
+	}
+	for _, bad := range [][2]string{{"", "HEAD"}, {"HEAD", ""}, {"--output=/tmp/x", "HEAD"}, {"HEAD", "-x"}} {
+		if _, err := repo.ChangedSince(ctx, bad[0], bad[1]); err == nil {
+			t.Errorf("ChangedSince(%q, %q) should be refused", bad[0], bad[1])
+		}
+	}
+	if _, err := repo.ChangedSince(ctx, "refs/heads/nope", "HEAD"); err == nil {
+		t.Error("an unknown base must be an error")
+	}
+}

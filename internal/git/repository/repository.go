@@ -493,3 +493,24 @@ func (r *Repository) PushedPaths(ctx context.Context, remote, rev string) ([]str
 	}
 	return paths, nil
 }
+
+// ChangedSince lists the files rev changes against base, from their merge base:
+// what a pull request of rev into base proposes. Renames list both paths.
+func (r *Repository) ChangedSince(ctx context.Context, base, rev string) ([]string, error) {
+	for _, ref := range []string{base, rev} {
+		if ref == "" || strings.HasPrefix(ref, "-") {
+			return nil, fmt.Errorf("invalid revision %q", ref)
+		}
+	}
+	out, err := r.git(ctx, "-c", "core.quotepath=false", "diff", "--name-only", "-z", "--no-renames", "--no-color", base+"..."+rev, "--")
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}

@@ -717,7 +717,7 @@ $ gtide push
   hint: fix them: a push that changes the file of an alert, such as backend/go.mod or package.json, is allowed so the fix can be sent. `gtide security` lists them
 ```
 
-**The fix is never blocked.** Alerts belong to the repository, not to your commit, so a rule that stopped every push would stop the push that fixes the alert. Tide lets a push through when it changes the file an alert is about: every blocking alert on a file the push touches is treated as a fix in progress. Alerts on files the push does not touch still hold it back.
+**The fix is never blocked.** Alerts belong to the repository, not to your commit, so a rule that stopped every push would stop the push that fixes the alert. Tide lets a push through when its branch changes the file an alert is about: every blocking alert on a file the push sends, or that the branch changes against its base branch, is treated as a fix in progress. So the commit that bumps `package.json` can be pushed, its pull request can be opened afterwards, and a later commit can be pushed to the same branch. Alerts on files the branch does not touch still hold the push back.
 
 Where it applies:
 

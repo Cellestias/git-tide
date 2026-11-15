@@ -89,10 +89,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 	}
 
 	if opts.Security != nil {
-		touched, err := repo.PushedPaths(ctx, cfg.Remote, "refs/heads/"+current)
-		if err != nil {
-			touched = nil
-		}
+		touched := appsecurity.Touched(ctx, repo, cfg, cfg.Remote, current, "refs/heads/"+current)
 		if err := opts.Security(ctx, touched); err != nil {
 			return err
 		}

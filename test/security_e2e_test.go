@@ -311,6 +311,35 @@ func TestSecurityLevelsEndToEnd(t *testing.T) {
 		}
 	})
 
+	t.Run("a fix that was already pushed still opens its pull request, and takes later commits", func(t *testing.T) {
+		setLevel("high")
+		branch("feature/pushed-first", "src/a.js")
+		testutil.WriteFile(t, dir, "package.json", "{}\n")
+		testutil.WriteFile(t, dir, "backend/go.mod", "module b\n")
+		git(t, dir, "add", "package.json", "backend/go.mod")
+		git(t, dir, "commit", "-q", "-m", "fix: bump")
+		if out, code := run(dir, "push"); code != 0 {
+			t.Fatalf("the fix must be pushed: %d\n%s", code, out)
+		}
+		// everything is on the remote now: nothing is left to send, but the branch still fixes the alerts
+		gh.reset()
+		out, code := run(dir, "pr", "--yes")
+		if code != 0 || !strings.Contains(out, "pull/42") || !strings.Contains(out, "treated as a fix") {
+			t.Fatalf("the pull request of an already pushed fix must open: %d\n%s", code, out)
+		}
+		testutil.WriteFile(t, dir, "notes.txt", "n\n")
+		git(t, dir, "add", "notes.txt")
+		git(t, dir, "commit", "-q", "-m", "docs: a note on the fix branch")
+		if out, code := run(dir, "push"); code != 0 {
+			t.Fatalf("a later commit on the fix branch: %d\n%s", code, out)
+		}
+		// a branch that does not touch the files is still held back, and so is its pull request
+		branch("feature/unrelated", "src/b.js")
+		if out, code := run(dir, "pr", "--yes"); code != 4 || !strings.Contains(out, "push blocked by security level high") {
+			t.Fatalf("an unrelated branch: %d\n%s", code, out)
+		}
+	})
+
 	t.Run("gtide security lists the alerts, as a table and as JSON, at any level", func(t *testing.T) {
 		setLevel("off")
 		out, code := run(dir, "security")

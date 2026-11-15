@@ -5,15 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/cellestias/git-tide/internal/apperr"
+	domain "github.com/cellestias/git-tide/internal/domain/config"
 	sec "github.com/cellestias/git-tide/internal/domain/security"
+	"github.com/cellestias/git-tide/internal/git/executor"
+	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/github"
 	"github.com/cellestias/git-tide/internal/gitlab"
 	"github.com/cellestias/git-tide/internal/output"
 	"github.com/cellestias/git-tide/internal/provider"
+	"github.com/cellestias/git-tide/internal/testutil"
 )
 
 // fakeProvider is GitHub with a canned answer for the alerts.
@@ -508,5 +514,57 @@ func TestThePushSaysWhenNothingIsBeingChecked(t *testing.T) {
 		if strings.Contains(o.stderr.String(), "nothing is being checked") {
 			t.Errorf("%s: wrong warning:\n%s", name, o.stderr.String())
 		}
+	}
+}
+
+func touchedRepo(t *testing.T) (*repository.Repository, domain.Config, string) {
+	t.Helper()
+	dir, _ := testutil.NewRepoWithRemote(t)
+	repo := repository.New(executor.Exec{}, dir)
+	testutil.Run(t, dir, "checkout", "-q", "-b", "fix/deps")
+	testutil.WriteFile(t, dir, "package.json", "{}\n")
+	testutil.Commit(t, dir, "fix(deps): bump")
+	return repo, domain.Default(), dir
+}
+
+func TestTouchedIsWhatThePushSendsAndWhatTheBranchChangesAgainstItsBase(t *testing.T) {
+	repo, cfg, dir := touchedRepo(t)
+	ctx := t.Context()
+	sorted := func(p []string) []string { sort.Strings(p); return p }
+
+	if got := sorted(Touched(ctx, repo, cfg, "origin", "fix/deps", "refs/heads/fix/deps")); !reflect.DeepEqual(got, []string{"package.json"}) {
+		t.Fatalf("before the push: %v", got)
+	}
+	// The fix is pushed. Nothing is left to send, but the branch still changes package.json:
+	// opening its pull request, or pushing a later commit, must still count as the fix.
+	testutil.Run(t, dir, "push", "-q", "-u", "origin", "fix/deps")
+	if sent, _ := repo.PushedPaths(ctx, "origin", "refs/heads/fix/deps"); len(sent) != 0 {
+		t.Fatalf("test set-up: nothing should be left to send, got %v", sent)
+	}
+	if got := sorted(Touched(ctx, repo, cfg, "origin", "fix/deps", "refs/heads/fix/deps")); !reflect.DeepEqual(got, []string{"package.json"}) {
+		t.Errorf("after the push: %v, want package.json (the branch's change against main)", got)
+	}
+	testutil.WriteFile(t, dir, "notes.txt", "n\n")
+	testutil.Commit(t, dir, "docs: a note")
+	if got := sorted(Touched(ctx, repo, cfg, "origin", "fix/deps", "refs/heads/fix/deps")); !reflect.DeepEqual(got, []string{"notes.txt", "package.json"}) {
+		t.Errorf("a later commit: %v (each file once, the new one and the branch's)", got)
+	}
+}
+
+func TestTouchedOnTheBaseBranchAndWithoutABase(t *testing.T) {
+	repo, cfg, _ := touchedRepo(t)
+	ctx := t.Context()
+	// the base branch has no base to compare with: only what is being sent counts
+	if got := Touched(ctx, repo, cfg, "origin", "main", "refs/heads/main"); len(got) != 0 {
+		t.Errorf("main, already published: %v", got)
+	}
+	// a base that cannot be found leaves only the pushed files
+	cfg.Branches.DefaultBase = "gone"
+	if got := Touched(ctx, repo, cfg, "origin", "fix/deps", "refs/heads/fix/deps"); !reflect.DeepEqual(got, []string{"package.json"}) {
+		t.Errorf("no base: %v", got)
+	}
+	// an unreadable revision never panics: it just yields nothing, so the check is stricter
+	if got := Touched(ctx, repo, cfg, "origin", "fix/deps", "--nonsense"); len(got) != 0 {
+		t.Errorf("bad rev: %v", got)
 	}
 }

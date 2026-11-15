@@ -141,12 +141,10 @@ func PrePush(ctx context.Context, repo *repository.Repository, cfg domain.Config
 				if remote == cfg.Remote {
 					known = remote
 				}
-				if paths, err := repo.PushedPaths(ctx, known, fields[1]); err == nil {
-					for _, path := range paths {
-						if !seen[path] {
-							seen[path] = true
-							touched = append(touched, path)
-						}
+				for _, path := range appsecurity.Touched(ctx, repo, cfg, known, name, fields[1]) {
+					if !seen[path] {
+						seen[path] = true
+						touched = append(touched, path)
 					}
 				}
 			}
