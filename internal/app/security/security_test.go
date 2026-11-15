@@ -349,3 +349,73 @@ func TestTheHintDependsOnWhyTheTokenFailed(t *testing.T) {
 		}
 	}
 }
+
+func bothOff() provider.SecurityReport {
+	return provider.SecurityReport{Sources: []provider.SourceResult{
+		{Source: provider.SourceDependabot, Enabled: false},
+		{Source: provider.SourceCodeScanning, Enabled: false},
+	}}
+}
+
+func TestWhenNothingIsEnabledTheListDoesNotPretendTheRepositoryIsClean(t *testing.T) {
+	var o out
+	if err := List(t.Context(), &fakeProvider{report: bothOff()}, acme, sec.Low, false, o.printer()); err != nil {
+		t.Fatalf("not enabled is not a failure: %v", err)
+	}
+	if strings.Contains(o.stdout.String()+o.stderr.String(), "✓") || strings.Contains(o.stdout.String()+o.stderr.String(), "No open security alerts") {
+		t.Errorf("no green tick when nothing is looked at:\n%s%s", o.stdout.String(), o.stderr.String())
+	}
+	for _, want := range []string{"Nothing is being checked on acme/tool: Dependabot and code scanning are not enabled there", "Dependabot alerts on", "GitHub Advanced Security"} {
+		if !strings.Contains(o.stderr.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, o.stderr.String())
+		}
+	}
+
+	// with one source on, "no alerts" is true, and the other one is named in the singular
+	o = out{}
+	one := provider.SecurityReport{Sources: []provider.SourceResult{{Source: provider.SourceDependabot, Enabled: true}, {Source: provider.SourceCodeScanning, Enabled: false}}}
+	if err := List(t.Context(), &fakeProvider{report: one}, acme, sec.Low, false, o.printer()); err != nil || !strings.Contains(o.stdout.String(), "No open security alerts on acme/tool (code scanning is not enabled there)") {
+		t.Errorf("err=%v\n%s%s", err, o.stdout.String(), o.stderr.String())
+	}
+
+	// the JSON says the same thing in data: both sources not_enabled, and an empty list
+	o = out{}
+	_ = List(t.Context(), &fakeProvider{report: bothOff()}, acme, sec.Low, true, o.printer())
+	var got struct {
+		Sources []struct{ Source, Status string }
+		Alerts  []any
+	}
+	if err := json.Unmarshal(o.stdout.Bytes(), &got); err != nil || len(got.Alerts) != 0 || got.Sources[0].Status != "not_enabled" || got.Sources[1].Status != "not_enabled" {
+		t.Errorf("err=%v got=%+v", err, got)
+	}
+}
+
+func TestThePushSaysWhenNothingIsBeingChecked(t *testing.T) {
+	for _, level := range []sec.Level{sec.Low, sec.Medium, sec.High} {
+		var o out
+		if err := gate(level, &fakeProvider{report: bothOff()}, &o)(t.Context(), sec.StagePush, nil); err != nil {
+			t.Errorf("%s: a repository with the features off must not block: %v", level, err)
+		}
+		want := "security.level is " + string(level) + ", but nothing is being checked on acme/tool: Dependabot and code scanning are not enabled there"
+		if !strings.Contains(o.stderr.String(), want) {
+			t.Errorf("%s: missing %q in:\n%s", level, want, o.stderr.String())
+		}
+	}
+	// a commit does not nag about it
+	var o out
+	_ = gate(sec.High, &fakeProvider{report: bothOff()}, &o)(t.Context(), sec.StageCommit, nil)
+	if o.stderr.Len() != 0 {
+		t.Errorf("a commit must stay quiet: %q", o.stderr.String())
+	}
+	// one source on, or one that failed: that is not "nothing is checked"
+	for name, r := range map[string]provider.SecurityReport{
+		"one on": {Sources: []provider.SourceResult{{Source: provider.SourceDependabot, Enabled: true}, {Source: provider.SourceCodeScanning, Enabled: false}}},
+		"failed": {Sources: []provider.SourceResult{{Source: provider.SourceDependabot, Enabled: true, Err: errors.New("denied")}, {Source: provider.SourceCodeScanning, Enabled: false}}},
+	} {
+		o = out{}
+		_ = gate(sec.Medium, &fakeProvider{report: r}, &o)(t.Context(), sec.StagePush, nil)
+		if strings.Contains(o.stderr.String(), "nothing is being checked") {
+			t.Errorf("%s: wrong warning:\n%s", name, o.stderr.String())
+		}
+	}
+}

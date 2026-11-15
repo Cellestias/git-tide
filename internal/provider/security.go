@@ -71,6 +71,21 @@ func (r SecurityReport) Unverified() []SourceResult {
 	return out
 }
 
+// NothingChecked reports that every source is simply not enabled on the
+// repository: no alert exists because none is being looked for, which is not the
+// same as a clean repository. A source that failed to answer does not count.
+func (r SecurityReport) NothingChecked() bool {
+	if len(r.Sources) == 0 {
+		return false
+	}
+	for _, s := range r.Sources {
+		if s.Err != nil || s.Enabled {
+			return false
+		}
+	}
+	return true
+}
+
 // SecurityReader is implemented by the providers that can list security alerts.
 // It is a separate interface so a provider without the feature (GitLab) needs
 // no stub, and callers say plainly that it is not available.

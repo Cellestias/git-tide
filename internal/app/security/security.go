@@ -88,7 +88,7 @@ func NewGate(level sec.Level, resolve Resolver, p output.Printer) Gate {
 			return unverifiable(level, stage, clean(err.Error(), 200), p)
 		}
 		d := sec.Decide(level, stage, report, touched)
-		announce(p, level, repo, report, d)
+		announce(p, level, stage, repo, report, d)
 		return verdict(level, d)
 	}
 }
@@ -112,9 +112,13 @@ func unverifiable(level sec.Level, stage sec.Stage, why string, p output.Printer
 
 // announce prints what the check found: the alerts (at every level), the sources
 // that could not be read, and the alerts that this push is allowed through.
-func announce(p output.Printer, level sec.Level, repo provider.Repo, report provider.SecurityReport, d sec.Decision) {
+func announce(p output.Printer, level sec.Level, stage sec.Stage, repo provider.Repo, report provider.SecurityReport, d sec.Decision) {
 	for _, s := range d.Unverified {
 		p.Warn("could not check %s alerts: %s", sourceName(s.Source), clean(s.Err.Error(), 200))
+	}
+	if stage == sec.StagePush && report.NothingChecked() {
+		// an empty list here is not a clean bill of health: say so, once, where it matters
+		p.Warn("security.level is %s, but nothing is being checked on %s: %s", level, repo, notEnabledText(report))
 	}
 	if len(d.Alerts) > 0 {
 		p.Warn("%d open security alert%s on %s (%s)", len(d.Alerts), plural(len(d.Alerts)), repo, countText(d.Alerts))

@@ -38,6 +38,12 @@ func List(ctx context.Context, prov provider.Provider, repo provider.Repo, level
 		p.Warn("could not check %s alerts: %s", sourceName(s.Source), clean(s.Err.Error(), 200))
 	}
 	if len(alerts) == 0 {
+		if report.NothingChecked() {
+			// not a green tick: nothing is being looked at, so "no alerts" would mislead
+			p.Warn("Nothing is being checked on %s: %s", repo, notEnabledText(report))
+			p.Note("turn Dependabot alerts on in the repository's settings (under Advanced Security or Code security); code scanning on a private repository needs GitHub Advanced Security")
+			return nil
+		}
 		p.Success("No open security alerts on %s%s", repo, notEnabledNote(report))
 		return nil
 	}
@@ -57,16 +63,28 @@ func List(ctx context.Context, prov provider.Provider, repo provider.Repo, level
 }
 
 func notEnabledNote(r provider.SecurityReport) string {
+	if t := notEnabledText(r); t != "" {
+		return " (" + t + ")"
+	}
+	return ""
+}
+
+// notEnabledText says which sources the repository does not use: "Dependabot is
+// not enabled there", "Dependabot and code scanning are not enabled there".
+func notEnabledText(r provider.SecurityReport) string {
 	var off []string
 	for _, s := range r.Sources {
 		if s.Err == nil && !s.Enabled {
 			off = append(off, sourceName(s.Source))
 		}
 	}
-	if len(off) == 0 {
+	switch len(off) {
+	case 0:
 		return ""
+	case 1:
+		return off[0] + " is not enabled there"
 	}
-	return " (" + strings.Join(off, " and ") + " is not enabled there)"
+	return strings.Join(off[:len(off)-1], ", ") + " and " + off[len(off)-1] + " are not enabled there"
 }
 
 type jsonAlert struct {
