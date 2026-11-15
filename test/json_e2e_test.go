@@ -74,6 +74,9 @@ func TestJSONOutputEndToEnd(t *testing.T) {
 		{[]string{"history", "--json", "--compare", "feature/x", "main"}, '{'},
 		{[]string{"tag", "--json"}, '['},
 		{[]string{"stash", "list", "--json"}, '['},
+		{[]string{"secrets", "scan", "--json"}, '{'},
+		{[]string{"secrets", "scan", "--history", "--json"}, '{'},
+		{[]string{"doctor", "--json"}, '{'},
 	} {
 		name := strings.Join(c.args, " ")
 		out, code := stdout(t, dir, c.args...)
