@@ -568,21 +568,22 @@ func (e *env) historyCmd() *cobra.Command {
 }
 
 func (e *env) historyShowCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, patch bool
 	cmd := &cobra.Command{
 		Use:     "show <commit>",
 		Short:   "Show one commit: author, message and the files it changed",
-		Example: "  gtide history show 1a2b3c4\n  gtide history show 1a2b3c4 --json",
+		Example: "  gtide history show 1a2b3c4\n  gtide history show 1a2b3c4 --patch\n  gtide history show 1a2b3c4 --json",
 		Args:    exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repo, _, err := e.requireConfig(cmd.Context())
 			if err != nil {
 				return err
 			}
-			return history.Show(cmd.Context(), repo, args[0], asJSON, e.p)
+			return history.Show(cmd.Context(), repo, args[0], asJSON, patch, e.p)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON on stdout")
+	cmd.Flags().BoolVar(&patch, "patch", false, "also print what the commit changed (in --json too)")
 	return cmd
 }
 

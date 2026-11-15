@@ -291,7 +291,7 @@ func TestShow(t *testing.T) {
 	testutil.Run(t, dir, "commit", "-q", "--author="+paulo, "-m", "feat: detail", "-m", "the body text")
 
 	var out, errOut bytes.Buffer
-	if err := Show(context.Background(), repo, "HEAD", false, output.Printer{Out: &out, Err: &errOut}); err != nil {
+	if err := Show(context.Background(), repo, "HEAD", false, false, output.Printer{Out: &out, Err: &errOut}); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"Paulo Silva <paulo@example.com>", "feat: detail", "the body text", "a.txt", "+2 -0", "1 file changed, +2 -0"} {
@@ -301,7 +301,7 @@ func TestShow(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := Show(context.Background(), repo, "HEAD", true, output.Printer{Out: &out, Err: &errOut}); err != nil {
+	if err := Show(context.Background(), repo, "HEAD", true, false, output.Printer{Out: &out, Err: &errOut}); err != nil {
 		t.Fatal(err)
 	}
 	var got struct {
@@ -316,7 +316,7 @@ func TestShow(t *testing.T) {
 	}
 
 	for _, bad := range []string{"nope", "--all", ""} {
-		if err := Show(context.Background(), repo, bad, false, output.Printer{Out: &out, Err: &errOut}); apperr.CodeOf(err) != apperr.CodeUsage {
+		if err := Show(context.Background(), repo, bad, false, false, output.Printer{Out: &out, Err: &errOut}); apperr.CodeOf(err) != apperr.CodeUsage {
 			t.Errorf("Show(%q): err = %v, want usage error", bad, err)
 		}
 	}
@@ -673,5 +673,44 @@ func TestGraphKeepsTheFiltersWorking(t *testing.T) {
 	got := readGraph(t, out)
 	if len(got) != 1 || got[0].Subject != "fix: theirs" || len(got[0].Parents) != 1 {
 		t.Fatalf("filtered graph = %+v", got)
+	}
+}
+
+func TestShowPatch(t *testing.T) {
+	repo, dir := setup(t)
+	show := func(rev string, asJSON bool) string {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		if err := Show(context.Background(), repo, rev, asJSON, true, output.Printer{Out: &out, Err: &errOut}); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+	out := show("HEAD", false)
+	for _, want := range []string{"fix: theirs", "src/rotation.py", "diff --git a/src/rotation.py", "+1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text missing %q:\n%s", want, out)
+		}
+	}
+	var got struct {
+		Subject string  `json:"subject"`
+		Patch   *string `json:"patch"`
+		Files   []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(show("HEAD", true)), &got); err != nil || got.Patch == nil || !strings.Contains(*got.Patch, "+1") || len(got.Files) != 1 {
+		t.Fatalf("json: err=%v got=%+v", err, got)
+	}
+	// Without the flag the JSON has no patch field, as before.
+	var out2, errOut bytes.Buffer
+	if err := Show(context.Background(), repo, "HEAD", true, false, output.Printer{Out: &out2, Err: &errOut}); err != nil || strings.Contains(out2.String(), `"patch"`) {
+		t.Fatalf("no flag: err=%v\n%s", err, &out2)
+	}
+	// A tab in the file and a merge commit do not confuse it.
+	testutil.WriteFile(t, dir, "d.tsv", "1\t2\t3\n")
+	testutil.Commit(t, dir, "feat: tabs")
+	if err := json.Unmarshal([]byte(show("HEAD", true)), &got); err != nil || len(got.Files) != 1 || got.Files[0].Path != "d.tsv" || got.Patch == nil || !strings.Contains(*got.Patch, "+1\t2\t3") {
+		t.Fatalf("tabs: err=%v got=%+v", err, got)
 	}
 }

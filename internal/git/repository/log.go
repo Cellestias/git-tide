@@ -245,13 +245,18 @@ type CommitDetail struct {
 }
 
 // Show returns the details of the commit rev. For a merge commit the files are
-// the changes against its first parent.
-func (r *Repository) Show(ctx context.Context, rev string) (CommitDetail, error) {
+// the changes against its first parent. With patch, Patch holds the diff (cut
+// at MaxPatchBytes, with Truncated set).
+func (r *Repository) Show(ctx context.Context, rev string, patch bool) (CommitDetail, error) {
 	if rev == "" || strings.HasPrefix(rev, "-") {
 		return CommitDetail{}, fmt.Errorf("invalid revision %q", rev)
 	}
 	format := "--format=%H%x00%h%x00%an%x00%ae%x00%at%x00%s%x00%b%x1e"
-	out, err := r.git(ctx, "-c", "core.quotepath=false", "show", "--numstat", "--no-renames", "-m", "--first-parent", format, rev, "--")
+	args := []string{"-c", "core.quotepath=false", "show", "--numstat", "--no-renames", "-m", "--first-parent"}
+	if patch {
+		args = append(args, "--patch", "--no-color", "--no-ext-diff", "--no-textconv")
+	}
+	out, err := r.git(ctx, append(args, format, rev, "--")...)
 	if err != nil {
 		return CommitDetail{}, err
 	}
@@ -269,6 +274,9 @@ func (r *Repository) Show(ctx context.Context, rev string) (CommitDetail, error)
 	}
 	if ts, err := strconv.ParseInt(f[4], 10, 64); err == nil {
 		d.Date = time.Unix(ts, 0)
+	}
+	if patch {
+		files, d.Patch, d.Truncated = splitPatch(files)
 	}
 	d.Files = parseNumstat(files)
 	return d, nil
