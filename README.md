@@ -23,6 +23,7 @@ Git stays the source of truth. Tide runs the Git you already have, needs no serv
 - [Authentication](#authentication)
 - [What the hooks do](#what-the-hooks-do)
 - [Exit codes](#exit-codes)
+- [Machine-readable output](#machine-readable-output)
 - [Security and limits](#security-and-limits)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -394,7 +395,7 @@ gtide diff --staged           # index against the last commit: what it would com
 gtide diff -f src/login.go --patch
 ```
 
-`status` shows the branch, how far it is ahead of or behind its upstream and its base (as of the last fetch: it does no network call), any merge or rebase in progress, and the changed files in groups: conflicts, staged, not staged and untracked. `diff` prints a per-file summary with added and deleted lines; `--patch` prints the full diff, without colour, textconv or external diff drivers. Untracked files are not part of a diff; they show in `status`.
+`status` shows the branch, how far it is ahead of or behind its upstream and its base (as of the last fetch: it does no network call), any merge or rebase in progress, and the changed files in groups: conflicts, staged, not staged and untracked. `diff` prints a per-file summary with added and deleted lines; `--patch` prints the full diff, without colour, textconv or external diff drivers. Untracked files are not part of a diff; they show in `status`. Both take `--json` (see [Machine-readable output](#machine-readable-output)).
 
 ### `gtide stash`
 
@@ -448,6 +449,7 @@ gtide history --me                                       # your commits on this 
 gtide history --branch feat/remember-login --member paulo
 gtide history --remote                                   # the remote copy of the branch (fetches it first)
 gtide history -f src/utils/rotation_keys.py              # who changed a file, following renames
+gtide history -f src/utils/rotation_keys.py --patch      # ...and what each commit changed in it
 gtide history --type fix --scope auth --since 2w
 gtide history --search "login"
 gtide history v1.3.2..v1.4.0                             # what a release added
@@ -470,6 +472,7 @@ gtide history show 1a2b3c4                               # one commit, with the 
 | `--merges` | Include merge commits. |
 | `-n, --limit` | At most this many commits (default 30; `0` for all). With `--type`/`--scope` it counts after the filter. |
 | `--summary` | Count commits per author instead of listing them. Ignores `--limit`. |
+| `--patch` | Add what each commit changed. With `-f`, only that file's lines, following renames: a file's history as commits plus changes. Also in `--json`. Not combinable with `--summary` or `--compare`. |
 | `--json` | Print JSON on stdout; each commit has a `files` array with the added and deleted lines. |
 
 `gtide history --compare <from> <to>` shows how far `<from>` is ahead of and behind `<to>`, and whether each commit `<from>` has would cherry-pick cleanly onto `<to>`. Commits are tried oldest first, each on top of the ones that applied; the simulation runs in memory and changes nothing. It needs Git 2.40 or later, exits with code `6` when a commit conflicts, and does not combine with the filters above.
@@ -762,6 +765,15 @@ To remove Tide's hooks, delete the three files in the hooks directory (`git rev-
 | `6` | Unsafe repository state; nothing was changed. |
 
 Note that when a hook rejects a command, Git itself reports a failure; the Tide exit code applies when you run `gtide` directly.
+
+## Machine-readable output
+
+`status`, `diff`, `branch`, `history`, `history show`, `tag` and `stash list` take `--json`: stdout holds only the JSON document, notes and warnings stay on stderr, and an empty result is `[]` or an object, never prose. `history --patch` adds what each commit changed. Fields only get added in minor releases. The shape of each command is in [docs/json.md](docs/json.md).
+
+```bash
+gtide status --json | jq '.files[] | select(.conflict) | .path'
+gtide history -f src/login.go --patch --json
+```
 
 ## Security and limits
 
