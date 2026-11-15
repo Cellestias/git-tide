@@ -133,6 +133,7 @@ func incompatible(o Options) []string {
 		{"--all", o.All}, {"--base", o.Base != ""}, {"--merges", o.Merges},
 		{"--since", o.Since != ""}, {"--until", o.Until != ""},
 		{"--search", o.Search != ""}, {"--type", o.Type != ""}, {"--scope", o.Scope != ""}, {"--summary", o.Summary},
+		{"--all-branches", o.AllBranches}, {"--graph", o.Graph}, {"--patch", o.Patch},
 	} {
 		if f.set {
 			bad = append(bad, f.name)
