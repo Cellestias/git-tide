@@ -463,3 +463,33 @@ func (r *Repository) IsIgnored(ctx context.Context, path string) (bool, error) {
 	}
 	return false, err
 }
+
+// PushedPaths lists the files changed by the commits of rev that no
+// remote-tracking ref of remote has yet: what a push of rev would send. An empty
+// remote counts every remote. Renames are listed as a delete and an add, so both
+// paths show.
+func (r *Repository) PushedPaths(ctx context.Context, remote, rev string) ([]string, error) {
+	if rev == "" || strings.HasPrefix(rev, "-") {
+		return nil, fmt.Errorf("invalid revision %q", rev)
+	}
+	known := "--remotes"
+	if remote != "" {
+		if strings.HasPrefix(remote, "-") || strings.ContainsAny(remote, "*?[\\ \t\n") {
+			return nil, fmt.Errorf("invalid remote name %q", remote)
+		}
+		known = "--remotes=" + remote
+	}
+	out, err := r.git(ctx, "-c", "core.quotepath=false", "log", "--name-only", "-z", "--format=", "--no-renames", "--no-color", rev, "--not", known, "--")
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
