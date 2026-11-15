@@ -105,7 +105,7 @@ func label(p provider.Provider) string {
 func unverifiable(level sec.Level, stage sec.Stage, why string, p output.Printer) error {
 	p.Warn("security alerts could not be checked: %s", why)
 	if level == sec.High && stage == sec.StagePush {
-		return blocked(level, "the security alerts could not be checked", "fix the problem above (a token with the security_events scope in GITHUB_TOKEN, or network access), or lower `security.level` in .tide.yml")
+		return blocked(level, "the security alerts could not be checked", "fix the problem above (the token and what it must be allowed to read are in the README, Security alerts; or the network), or lower `security.level` in .tide.yml")
 	}
 	return nil
 }
@@ -134,7 +134,7 @@ func verdict(level sec.Level, d sec.Decision) error {
 		return nil
 	}
 	if d.UnverifiedBlocks {
-		return blocked(level, "the security alerts could not be fully checked", "fix the problem above (a token with the security_events scope in GITHUB_TOKEN), or lower `security.level` in .tide.yml")
+		return blocked(level, "the security alerts could not be fully checked", "fix the problem above (the token and what it must be allowed to read are in the README, Security alerts), or lower `security.level` in .tide.yml")
 	}
 	reason := fmt.Sprintf("%d open alert%s (%s)", len(d.Blockers), plural(len(d.Blockers)), countText(d.Blockers))
 	paths := affected(d.Blockers)

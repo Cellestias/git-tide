@@ -238,9 +238,9 @@ func TestWhatCannotBeReadIsReportedAsAFailureOfThatSource(t *testing.T) {
 		header map[string]string
 		want   string
 	}{
-		{"token rejected", 401, `{"message":"Bad credentials"}`, nil, "rejected the token"},
-		{"no rights", 403, `{"message":"Resource not accessible by personal access token"}`, nil, "security_events"},
-		{"hidden repository", 404, `{"message":"Not Found"}`, nil, "cannot find the repository"},
+		{"token rejected", 401, `{"message":"Bad credentials"}`, nil, "rejected the token (401): it is invalid, expired or revoked"},
+		{"no rights", 403, `{"message":"Resource not accessible by personal access token"}`, nil, "fine-grained: Dependabot alerts, Read; classic: security_events"},
+		{"hidden repository or alerts off", 404, `{"message":"Not Found"}`, nil, "the token cannot see this repository, or Dependabot alerts are not enabled on it"},
 		{"rate limit", 403, `{"message":"API rate limit exceeded"}`, map[string]string{"X-RateLimit-Remaining": "0"}, "rate limit"},
 		{"server error", 500, `{}`, nil, "status 500"},
 	}
@@ -276,12 +276,12 @@ func TestWhatCannotBeReadIsReportedAsAFailureOfThatSource(t *testing.T) {
 	}
 }
 
-func TestWithoutATokenTheErrorSaysWhatToSet(t *testing.T) {
+func TestWithoutATokenTheErrorSaysWhereToLook(t *testing.T) {
 	_, c := newServer(t, func(w http.ResponseWriter, r *http.Request) { reply(w, 404, `{"message":"Not Found"}`) })
 	c.Token = ""
 	rep, _ := c.SecurityAlerts(t.Context(), tool)
 	err := result(rep, provider.SourceDependabot).Err
-	if err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN") || !strings.Contains(err.Error(), "security_events") {
+	if err == nil || !strings.Contains(err.Error(), "no token is set") || !strings.Contains(err.Error(), "README") {
 		t.Errorf("error = %v", err)
 	}
 }

@@ -140,16 +140,18 @@ func (c *Client) securityGet(ctx context.Context, source, endpoint string) (body
 	msg := strings.ToLower(apiMessage(resp.Body))
 	hint := ""
 	if c.Token == "" {
-		hint = " (no token: set GITHUB_TOKEN, with the security_events scope or access to this repository)"
+		hint = " (no token is set: see the README, Security alerts, for the token it needs)"
 	}
 	switch resp.Status {
 	case http.StatusNotFound:
 		if source == provider.SourceCodeScanning && strings.Contains(msg, "no analysis found") {
 			return nil, "", errNotEnabled
 		}
-		return nil, "", fmt.Errorf("GitHub cannot find the repository, or the token cannot see its %s alerts%s", sourceLabel(source), hint)
+		// GitHub answers 404 both for a private repository the token cannot see and, for
+		// Dependabot, when its alerts are off: the two cannot be told apart.
+		return nil, "", fmt.Errorf("GitHub answered \"not found\" for the %s alerts: the token cannot see this repository, or %s are not enabled on it%s", sourceLabel(source), sourceLabel(source)+" alerts", hint)
 	case http.StatusUnauthorized:
-		return nil, "", fmt.Errorf("GitHub rejected the token (401); check GITHUB_TOKEN")
+		return nil, "", fmt.Errorf("GitHub rejected the token (401): it is invalid, expired or revoked")
 	case http.StatusForbidden, http.StatusTooManyRequests:
 		if resp.Header.Get("X-RateLimit-Remaining") == "0" {
 			return nil, "", fmt.Errorf("GitHub API rate limit exceeded; retry later")
@@ -159,9 +161,17 @@ func (c *Client) securityGet(ctx context.Context, source, endpoint string) (body
 				return nil, "", errNotEnabled
 			}
 		}
-		return nil, "", fmt.Errorf("GitHub denied access to the %s alerts (%d): the token needs the security_events scope, or the right to read them%s", sourceLabel(source), resp.Status, hint)
+		return nil, "", fmt.Errorf("GitHub denied access to the %s alerts (%d): the token lacks the permission to read them (%s)%s", sourceLabel(source), resp.Status, permissionNeeded(source), hint)
 	}
 	return nil, "", fmt.Errorf("GitHub API returned status %d", resp.Status)
+}
+
+// permissionNeeded names what a token must have to read a source's alerts.
+func permissionNeeded(source string) string {
+	if source == provider.SourceCodeScanning {
+		return "fine-grained: Code scanning alerts, Read; classic: security_events"
+	}
+	return "fine-grained: Dependabot alerts, Read; classic: security_events"
 }
 
 func sourceLabel(source string) string {

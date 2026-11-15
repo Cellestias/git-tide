@@ -27,8 +27,7 @@ func List(ctx context.Context, prov provider.Provider, repo provider.Repo, level
 	}
 	unverified := report.Unverified()
 	if len(unverified) == len(report.Sources) && len(unverified) > 0 {
-		return apperr.New(apperr.CodeExternal, "cannot read the security alerts: "+clean(unverified[0].Err.Error(), 200),
-			"a token with the security_events scope (or access to the repository) in GITHUB_TOKEN is needed")
+		return apperr.New(apperr.CodeExternal, "cannot read the security alerts: "+clean(unverified[0].Err.Error(), 200), tokenHint(unverified))
 	}
 	alerts := sec.Sorted(report.Alerts)
 	if asJSON {
@@ -118,4 +117,16 @@ func writeJSON(p output.Printer, prov provider.Provider, repo provider.Repo, lev
 		return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", err)
 	}
 	return nil
+}
+
+// tokenHint says what to do about the failures of every source. A 401 is a token
+// GitHub does not accept at all (wrong, expired, revoked), which no permission
+// fixes; anything else is a token that is accepted but may not read the alerts.
+func tokenHint(failed []provider.SourceResult) string {
+	for _, f := range failed {
+		if f.Err != nil && strings.Contains(f.Err.Error(), "(401)") {
+			return "the token is not accepted: make a new one and check which one is in use (secret.tide.yml, GITHUB_TOKEN, GH_TOKEN or .env: see the README, \"Where the token comes from\")"
+		}
+	}
+	return "the token needs to read the alerts: Dependabot alerts and Code scanning alerts (Read) for a fine-grained token, or security_events for a classic one (see the README, Security alerts)"
 }

@@ -326,3 +326,26 @@ func TestListFailsWhenNothingCouldBeRead(t *testing.T) {
 		}
 	}
 }
+
+func TestTheHintDependsOnWhyTheTokenFailed(t *testing.T) {
+	rejected := &fakeProvider{report: provider.SecurityReport{Sources: []provider.SourceResult{
+		{Source: provider.SourceDependabot, Enabled: true, Err: errors.New("GitHub rejected the token (401): it is invalid, expired or revoked")},
+		{Source: provider.SourceCodeScanning, Enabled: true, Err: errors.New("GitHub rejected the token (401): it is invalid, expired or revoked")},
+	}}}
+	err := List(t.Context(), rejected, acme, sec.Low, false, (&out{}).printer())
+	h := apperr.HintOf(err)
+	if err == nil || !strings.Contains(h, "make a new one") || !strings.Contains(h, "Where the token comes from") || strings.Contains(h, "security_events") {
+		t.Errorf("a 401 is a token GitHub does not accept, not a missing scope: hint = %q", h)
+	}
+
+	denied := &fakeProvider{report: provider.SecurityReport{Sources: []provider.SourceResult{
+		{Source: provider.SourceDependabot, Enabled: true, Err: errors.New("GitHub denied access to the Dependabot alerts (403)")},
+		{Source: provider.SourceCodeScanning, Enabled: true, Err: errors.New("GitHub denied access to the code scanning alerts (403)")},
+	}}}
+	h = apperr.HintOf(List(t.Context(), denied, acme, sec.Low, false, (&out{}).printer()))
+	for _, want := range []string{"Dependabot alerts and Code scanning alerts (Read)", "fine-grained", "security_events", "classic"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("hint for a token without rights lacks %q: %q", want, h)
+		}
+	}
+}
