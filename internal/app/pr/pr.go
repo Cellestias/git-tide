@@ -132,6 +132,10 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 	case errors.Is(err, provider.ErrNotFound):
 		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s not found or the token cannot write to it", ghRepo),
 			c.TokenEnv()+" needs "+noun+" write access; the branch was pushed")
+	case err != nil && strings.Contains(err.Error(), "(403)"):
+		// The token is accepted but may not open requests: the usual cause is one made for reading only.
+		return apperr.Wrap(apperr.CodeExternal, "cannot create "+noun,
+			"the branch was pushed. The token needs permission to write "+noun+"s: \"Pull requests: Read and write\" for a fine-grained GitHub token (with the organisation as resource owner), the repo scope for a classic one, or the api scope on GitLab. Then re-run `gtide pr`", err)
 	case err != nil:
 		return apperr.Wrap(apperr.CodeExternal, "cannot create "+noun, "the branch was pushed; re-run `gtide pr`", err)
 	}

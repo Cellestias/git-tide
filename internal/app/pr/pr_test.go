@@ -228,3 +228,22 @@ func TestPRAsksTheSecurityCheckBeforePushingAndStopsWhenItDoes(t *testing.T) {
 		t.Errorf("calls = %d", creator.calls)
 	}
 }
+
+func TestPRExplainsAForbiddenToken(t *testing.T) {
+	repo, _, _ := setup(t)
+	creator := &fakeCreator{Client: &github.Client{}, err: errors.New("GitHub denied access (403); check token permissions")}
+	_, _, err := run(repo, creator, Options{Title: "t", Body: "b"})
+	if apperr.CodeOf(err) != apperr.CodeExternal {
+		t.Fatalf("err = %v", err)
+	}
+	for _, want := range []string{"the branch was pushed", "Pull requests: Read and write", "resource owner", "repo scope", "re-run `gtide pr`"} {
+		if !strings.Contains(apperr.HintOf(err), want) {
+			t.Errorf("hint lacks %q: %q", want, apperr.HintOf(err))
+		}
+	}
+	// any other failure keeps the plain hint
+	creator.err = errors.New("GitHub API returned status 500")
+	if _, _, err := run(repo, creator, Options{Title: "t", Body: "b"}); strings.Contains(apperr.HintOf(err), "Pull requests") {
+		t.Errorf("a 500 is not a token problem: %q", apperr.HintOf(err))
+	}
+}
