@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/cellestias/git-tide/internal/config"
+	domain "github.com/cellestias/git-tide/internal/domain/config"
+	"github.com/cellestias/git-tide/internal/domain/security"
 	"github.com/cellestias/git-tide/internal/git/executor"
 	"github.com/cellestias/git-tide/internal/git/hooks"
 	"github.com/cellestias/git-tide/internal/git/repository"
@@ -79,12 +81,14 @@ func Run(ctx context.Context, ex executor.Executor, dir string) []Check {
 	}
 	c := cfg.Config
 
+	providerName := ""
 	resolved, rerr := repo.RemoteURL(ctx, c.Remote)
 	if rerr != nil {
 		add(Warn, "remote", fmt.Sprintf("remote %q is not configured", c.Remote), "`gtide update`, `gtide pr` and `gtide review` need it; add it with `gtide remote add <url>`")
 	} else {
 		configured, _ := repo.RemoteConfiguredURL(ctx, c.Remote)
 		name, err := providers.Resolve(c.Provider, configured, executor.Redact(resolved))
+		providerName = name
 		if err != nil {
 			add(Warn, "provider", fmt.Sprintf("cannot detect the provider from remote %q", c.Remote), "set `provider: github` or `provider: gitlab` in .tide.yml")
 		} else if p, err := providers.New(name, provider.Host(configured), ""); err != nil {
@@ -100,6 +104,7 @@ func Run(ctx context.Context, ex executor.Executor, dir string) []Check {
 		}
 	}
 
+	checks = append(checks, securityChecks(c, providerName)...)
 	checks = append(checks, secretFileChecks(ctx, repo, ex)...)
 
 	base := c.Branches.DefaultBase
@@ -183,4 +188,20 @@ func secretFileChecks(ctx context.Context, repo *repository.Repository, _ execut
 		out = append(out, Check{Level: Warn, Name: "provider token", Detail: "$" + v + " is not set", Hint: "export it, or put it in .env (git-ignored)"})
 	}
 	return out
+}
+
+// securityChecks says what the configured security level can do with this provider.
+func securityChecks(c domain.Config, providerName string) []Check {
+	level := c.SecurityLevel()
+	if level == security.Off {
+		return nil
+	}
+	switch providerName {
+	case provider.GitHub:
+		return []Check{{Level: OK, Name: "security", Detail: fmt.Sprintf("level %s: Dependabot and code scanning alerts", level),
+			Hint: "needs GITHUB_TOKEN with the security_events scope; `gtide security` shows what it can read"}}
+	case "":
+		return []Check{{Level: Warn, Name: "security", Detail: fmt.Sprintf("level %s, but the provider is not known", level), Hint: "set `provider: github` in .tide.yml"}}
+	}
+	return []Check{{Level: Warn, Name: "security", Detail: fmt.Sprintf("level %s, but %s has no security alerts API Tide can read: nothing is checked", level, providerName)}}
 }

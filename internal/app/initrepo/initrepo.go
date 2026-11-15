@@ -89,6 +89,16 @@ secrets:
   #   - name: internal_token
   #     pattern: "corp_[A-Za-z0-9]{32}"
 
+security:
+  # How strict Tide is about the security alerts of the repository (Dependabot and code scanning, on GitHub).
+  # Needs GITHUB_TOKEN with the security_events scope. "gtide security" lists the alerts whatever this is.
+  #   off     look nothing up
+  #   low     warn at push, never block
+  #   medium  warn at commit and at push; block a push while a critical alert is open
+  #   high    warn at commit; block a push while any alert is open, or cannot be checked
+  # A push that changes the file an alert is about (such as package.json) is always allowed, so the fix can be sent.
+  level: off
+
 hooks:
   manage: true
 `
