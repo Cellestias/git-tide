@@ -19,8 +19,52 @@ type LogEntry struct {
 	Date        time.Time // author date
 	Subject     string
 	Files       []FileChange // only with LogQuery.Files
+	Parents     []string     // full hashes; only with LogQuery.Graph
+	Refs        []Ref        // branches and tags at this commit; only with LogQuery.Graph
 	Patch       string       // only with LogQuery.Patch: the diff of the commit, limited to LogQuery.Path
 	Truncated   bool         // Patch was cut at MaxPatchBytes
+}
+
+// Ref kinds, as reported in LogEntry.Refs.
+const (
+	RefBranch = "branch" // a local branch
+	RefRemote = "remote" // a remote-tracking branch
+	RefTag    = "tag"
+	RefHead   = "head" // a detached HEAD
+)
+
+// Ref is a branch or tag that points at a commit.
+type Ref struct {
+	Name    string // "main", "origin/main", "v1.2.0"
+	Kind    string
+	Current bool // the checked-out branch (HEAD points at it)
+}
+
+// parseRefs reads `%D` printed with --decorate=full: "HEAD -> refs/heads/main,
+// tag: refs/tags/v1, refs/remotes/origin/main". Remote HEAD pointers and refs
+// that are neither branches nor tags are left out.
+func parseRefs(decorations string) []Ref {
+	var refs []Ref
+	for _, d := range strings.Split(decorations, ", ") {
+		d = strings.TrimSpace(d)
+		switch {
+		case d == "":
+		case d == "HEAD":
+			refs = append(refs, Ref{Name: "HEAD", Kind: RefHead, Current: true})
+		case strings.HasPrefix(d, "HEAD -> refs/heads/"):
+			refs = append(refs, Ref{Name: strings.TrimPrefix(d, "HEAD -> refs/heads/"), Kind: RefBranch, Current: true})
+		case strings.HasPrefix(d, "tag: refs/tags/"):
+			refs = append(refs, Ref{Name: strings.TrimPrefix(d, "tag: refs/tags/"), Kind: RefTag})
+		case strings.HasPrefix(d, "refs/heads/"):
+			refs = append(refs, Ref{Name: strings.TrimPrefix(d, "refs/heads/"), Kind: RefBranch})
+		case strings.HasPrefix(d, "refs/remotes/"):
+			name := strings.TrimPrefix(d, "refs/remotes/")
+			if !strings.HasSuffix(name, "/HEAD") {
+				refs = append(refs, Ref{Name: name, Kind: RefRemote})
+			}
+		}
+	}
+	return refs
 }
 
 // MaxPatchBytes caps the patch kept for one commit, so a huge generated file
@@ -41,6 +85,8 @@ type LogQuery struct {
 	Merges  bool // include merge commits
 	Files   bool // fill LogEntry.Files (one extra pass over the diffs)
 	Patch   bool // fill LogEntry.Patch with the diff of each commit (limited to Path)
+	AllRefs bool // read every local branch, remote-tracking branch and tag instead of Rev; Exclude is ignored
+	Graph   bool // fill LogEntry.Parents and LogEntry.Refs, and order commits so parents follow their children
 	Limit   int  // 0 means no limit
 }
 
@@ -56,7 +102,14 @@ func (r *Repository) Log(ctx context.Context, q LogQuery) ([]LogEntry, error) {
 		}
 		sep = "\x1e" + hex.EncodeToString(b[:]) + "\x1e"
 	}
-	args := []string{"-c", "core.quotepath=false", "--literal-pathspecs", "log", "--format=" + sep + "%H%x00%h%x00%an%x00%ae%x00%at%x00%s"}
+	format := "--format=" + sep + "%H%x00%h%x00%an%x00%ae%x00%at%x00%s"
+	if q.Graph {
+		format += "%x00%P%x00%D"
+	}
+	args := []string{"-c", "core.quotepath=false", "--literal-pathspecs", "log", format}
+	if q.Graph {
+		args = append(args, "--decorate=full", "--topo-order")
+	}
 	if q.Files {
 		args = append(args, "--numstat")
 	}
@@ -87,9 +140,13 @@ func (r *Repository) Log(ctx context.Context, q LogQuery) ([]LogEntry, error) {
 	if q.Path != "" && q.Follow {
 		args = append(args, "--follow")
 	}
-	args = append(args, q.Rev)
-	if q.Exclude != "" {
-		args = append(args, "^"+q.Exclude)
+	if q.AllRefs {
+		args = append(args, "--branches", "--remotes", "--tags")
+	} else {
+		args = append(args, q.Rev)
+		if q.Exclude != "" {
+			args = append(args, "^"+q.Exclude)
+		}
 	}
 	args = append(args, "--")
 	if q.Path != "" {
@@ -107,10 +164,18 @@ func (r *Repository) Log(ctx context.Context, q LogQuery) ([]LogEntry, error) {
 		}
 		head, numstat, _ := strings.Cut(rec, "\n")
 		f := strings.Split(head, "\x00")
-		if len(f) != 6 {
+		want := 6
+		if q.Graph {
+			want = 8
+		}
+		if len(f) != want {
 			return nil, fmt.Errorf("unexpected log output %q", head)
 		}
 		e := LogEntry{FullHash: f[0], Hash: f[1], AuthorName: f[2], AuthorEmail: f[3], Subject: f[5]}
+		if q.Graph {
+			e.Parents = strings.Fields(f[6])
+			e.Refs = parseRefs(f[7])
+		}
 		if ts, err := strconv.ParseInt(f[4], 10, 64); err == nil {
 			e.Date = time.Unix(ts, 0)
 		}
@@ -180,13 +245,18 @@ type CommitDetail struct {
 }
 
 // Show returns the details of the commit rev. For a merge commit the files are
-// the changes against its first parent.
-func (r *Repository) Show(ctx context.Context, rev string) (CommitDetail, error) {
+// the changes against its first parent. With patch, Patch holds the diff (cut
+// at MaxPatchBytes, with Truncated set).
+func (r *Repository) Show(ctx context.Context, rev string, patch bool) (CommitDetail, error) {
 	if rev == "" || strings.HasPrefix(rev, "-") {
 		return CommitDetail{}, fmt.Errorf("invalid revision %q", rev)
 	}
 	format := "--format=%H%x00%h%x00%an%x00%ae%x00%at%x00%s%x00%b%x1e"
-	out, err := r.git(ctx, "-c", "core.quotepath=false", "show", "--numstat", "--no-renames", "-m", "--first-parent", format, rev, "--")
+	args := []string{"-c", "core.quotepath=false", "show", "--numstat", "--no-renames", "-m", "--first-parent"}
+	if patch {
+		args = append(args, "--patch", "--no-color", "--no-ext-diff", "--no-textconv")
+	}
+	out, err := r.git(ctx, append(args, format, rev, "--")...)
 	if err != nil {
 		return CommitDetail{}, err
 	}
@@ -204,6 +274,9 @@ func (r *Repository) Show(ctx context.Context, rev string) (CommitDetail, error)
 	}
 	if ts, err := strconv.ParseInt(f[4], 10, 64); err == nil {
 		d.Date = time.Unix(ts, 0)
+	}
+	if patch {
+		files, d.Patch, d.Truncated = splitPatch(files)
 	}
 	d.Files = parseNumstat(files)
 	return d, nil

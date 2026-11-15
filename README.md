@@ -454,7 +454,9 @@ gtide history --type fix --scope auth --since 2w
 gtide history --search "login"
 gtide history v1.3.2..v1.4.0                             # what a release added
 gtide history --summary --since 1m                       # commits per author
+gtide history --all-branches --merges                    # every branch at once
 gtide history show 1a2b3c4                               # one commit, with the files it changed
+gtide history show 1a2b3c4 --patch                       # ...and what it changed
 ```
 
 | Flag | Effect |
@@ -473,6 +475,8 @@ gtide history show 1a2b3c4                               # one commit, with the 
 | `-n, --limit` | At most this many commits (default 30; `0` for all). With `--type`/`--scope` it counts after the filter. |
 | `--summary` | Count commits per author instead of listing them. Ignores `--limit`. |
 | `--patch` | Add what each commit changed. With `-f`, only that file's lines, following renames: a file's history as commits plus changes. Also in `--json`. Not combinable with `--summary` or `--compare`. |
+| `--all-branches` | Read every local and remote-tracking branch and tag at once, not one branch. Not combinable with `--branch`, `--remote`, `--base` or a range. |
+| `--graph` | With `--json`: add each commit's full hash, its parents and the branches and tags on it, with parents after their children, to draw a commit graph. |
 | `--json` | Print JSON on stdout; each commit has a `files` array with the added and deleted lines. |
 
 `gtide history --compare <from> <to>` shows how far `<from>` is ahead of and behind `<to>`, and whether each commit `<from>` has would cherry-pick cleanly onto `<to>`. Commits are tried oldest first, each on top of the ones that applied; the simulation runs in memory and changes nothing. It needs Git 2.40 or later, exits with code `6` when a commit conflicts, and does not combine with the filters above.

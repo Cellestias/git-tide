@@ -19,8 +19,8 @@ Read-only commands can print JSON for programs: the VS Code extension, scripts, 
 | `gtide status --json` | object |
 | `gtide diff --json [--staged] [--patch] [-f path]` | object |
 | `gtide branch --json [--remote] [--hosted] ...` | array |
-| `gtide history --json [...] [--patch]` | array |
-| `gtide history show <commit> --json` | object |
+| `gtide history --json [...] [--patch] [--graph] [--all-branches]` | array |
+| `gtide history show <commit> --json [--patch]` | object |
 | `gtide history --summary --json` | array |
 | `gtide history --compare <from> <to> --json` | object |
 | `gtide tag --json [-n limit]` | array |
@@ -96,7 +96,27 @@ Read-only commands can print JSON for programs: the VS Code extension, scripts, 
 
 - `patch` and `patch_truncated` appear only with `--patch`. With `-f` the patch holds only that file's lines, following renames, so a file's history reads as the commits and their changes.
 - A patch is cut at 256 KiB per commit; `patch_truncated` is then `true` (and absent otherwise).
-- `history show` adds `body` and a full-length `hash`.
+- `history show` adds `body` and a full-length `hash`; with `--patch` it adds `patch` and `patch_truncated` too (a merge commit shows its changes against the first parent).
+
+With `--graph` (which needs `--json`) each commit also carries its topology, for drawing a commit graph:
+
+```json
+{
+  "hash": "1a2b3c4",
+  "full_hash": "1a2b3c4d5e6f...",
+  "parents": ["9f8e7d6c5b4a..."],
+  "refs": [
+    { "name": "feature/x", "kind": "branch", "current": true },
+    { "name": "origin/feature/x", "kind": "remote", "current": false },
+    { "name": "v1.5.0", "kind": "tag", "current": false }
+  ]
+}
+```
+
+- `parents` are full hashes: empty for the first commit, two for a merge. `refs` are the branches and tags that point at the commit. `kind` is `branch`, `remote`, `tag`, or `head` for a detached HEAD. `current` marks the checked-out branch. A remote's `HEAD` pointer is left out.
+- With `--graph` the commits come newest first **with every parent after its children**, which is what a lane layout needs. Without it the order is Git's default (by date).
+- `--all-branches` reads every local branch, remote-tracking branch and tag at once instead of one branch; it does not combine with `--branch`, `--remote`, `--base` or a range. Add `--merges` to keep merge commits in the graph.
+- The filters (`--me`, `--member`, `--search`, `--type`, `--scope`, `--since`, `--until`, `-f`) still apply, and they remove commits from the list. To draw the whole graph and only *highlight* the matches, ask twice: once without filters for the topology, once with them for the hashes that match.
 
 ### tag
 
@@ -114,4 +134,4 @@ Read-only commands can print JSON for programs: the VS Code extension, scripts, 
 
 ## Checking the version
 
-`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
+`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `history --json` and `history show --json` exist since v1.4.0.

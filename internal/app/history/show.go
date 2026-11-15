@@ -14,7 +14,7 @@ import (
 
 // Show prints one commit: author, date, message and the files it changed with
 // their line counts (`gtide history show`).
-func Show(ctx context.Context, repo *repository.Repository, rev string, asJSON bool, p output.Printer) error {
+func Show(ctx context.Context, repo *repository.Repository, rev string, asJSON, patch bool, p output.Printer) error {
 	rev = strings.TrimSpace(rev)
 	if rev == "" || strings.HasPrefix(rev, "-") {
 		return apperr.Usage("invalid commit %q", rev)
@@ -22,7 +22,7 @@ func Show(ctx context.Context, repo *repository.Repository, rev string, asJSON b
 	if ok, err := repo.CommitExists(ctx, rev); err != nil || !ok {
 		return apperr.New(apperr.CodeUsage, fmt.Sprintf("commit %q not found", rev), "give a hash, a branch or a tag; see `gtide history` for hashes")
 	}
-	d, err := repo.Show(ctx, rev)
+	d, err := repo.Show(ctx, rev, patch)
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot read the commit", "", err)
 	}
@@ -36,7 +36,14 @@ func Show(ctx context.Context, repo *repository.Repository, rev string, asJSON b
 			Subject string     `json:"subject"`
 			Body    string     `json:"body"`
 			Files   []jsonFile `json:"files"`
-		}{d.FullHash, d.AuthorName, d.AuthorEmail, d.Date, d.Subject, d.Body, toJSONFiles(d.Files)}
+			// Only with --patch.
+			Patch          *string `json:"patch,omitempty"`
+			PatchTruncated bool    `json:"patch_truncated,omitempty"`
+		}{Hash: d.FullHash, Author: d.AuthorName, Email: d.AuthorEmail, Date: d.Date, Subject: d.Subject, Body: d.Body, Files: toJSONFiles(d.Files)}
+		if patch {
+			text := d.Patch
+			out.Patch, out.PatchTruncated = &text, d.Truncated
+		}
 		return encode(p, out)
 	}
 
@@ -67,5 +74,12 @@ func Show(ctx context.Context, repo *repository.Repository, rev string, asJSON b
 	}
 	p.Table(rows, nil)
 	p.Line("%d file%s changed, +%d -%d", len(d.Files), plural(len(d.Files)), added, deleted)
+	if patch && d.Patch != "" {
+		p.Line("")
+		_, _ = fmt.Fprint(p.Out, d.Patch)
+		if d.Truncated {
+			p.Line("%s", p.Dim("... patch cut at "+strconv.Itoa(repository.MaxPatchBytes/1024)+" KiB"))
+		}
+	}
 	return nil
 }

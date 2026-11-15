@@ -46,6 +46,9 @@ type Options struct {
 	Range   string // "from..to": the commits in to that are not in from
 	Summary bool   // count commits per author instead of listing them; ignores Limit
 	Patch   bool   // show what each commit changed (limited to File when given)
+
+	AllBranches bool // every local branch, remote-tracking branch and tag, not one branch
+	Graph       bool // with JSON: add each commit's full hash, parents and the branches and tags on it
 }
 
 // conventional reads "type(scope)!: description" from a commit subject.
@@ -90,6 +93,15 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	if opts.Patch && opts.Summary {
 		return apperr.Usage("--patch cannot be combined with --summary")
 	}
+	if opts.Graph && !opts.JSON {
+		return apperr.Usage("--graph needs --json: it adds the parents and the refs of each commit to the JSON")
+	}
+	if opts.Graph && opts.Summary {
+		return apperr.Usage("--graph cannot be combined with --summary")
+	}
+	if opts.AllBranches && (opts.Branch != "" || opts.Remote || opts.Base != "" || opts.Range != "") {
+		return apperr.Usage("--all-branches cannot be combined with --branch, --remote, --base or a range")
+	}
 	opts.Search, opts.Scope = strings.TrimSpace(opts.Search), strings.TrimSpace(opts.Scope)
 
 	q := repository.LogQuery{Limit: opts.Limit, Search: opts.Search}
@@ -130,7 +142,10 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	}
 
 	var name, label string
-	if opts.Range != "" {
+	switch {
+	case opts.AllBranches:
+		q.AllRefs, label = true, "all branches"
+	case opts.Range != "":
 		from, to, err := parseRange(opts.Range)
 		if err != nil {
 			return err
@@ -141,7 +156,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 			}
 		}
 		q.Rev, q.Exclude, label = to, from, opts.Range
-	} else {
+	default:
 		if name, err = branchName(ctx, repo, opts.Branch); err != nil {
 			return err
 		}
@@ -153,7 +168,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 	// A file's history and --all read everything; otherwise only what the
 	// branch adds to its base, so inherited history does not drown the list.
 	scope := ""
-	if !opts.All && q.Path == "" && opts.Range == "" {
+	if !opts.All && !opts.AllBranches && q.Path == "" && opts.Range == "" {
 		base, ref, err := baseRef(ctx, repo, cfg, name, opts.Base)
 		if err != nil {
 			return err
@@ -168,6 +183,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 
 	q.Files = opts.JSON && !opts.Summary
 	q.Patch = opts.Patch
+	q.Graph = opts.Graph
 	entries, err := repo.Log(ctx, q)
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot read the commit history", "", err)
@@ -188,7 +204,7 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 		return summarize(p, entries, label, describe(q, opts, scope), opts.JSON)
 	}
 	if opts.JSON {
-		return writeJSON(p, entries, opts.Patch)
+		return writeJSON(p, entries, opts.Patch, opts.Graph)
 	}
 	if len(entries) == 0 {
 		p.Info("No commits match on %s%s", label, describe(q, opts, scope))
@@ -371,6 +387,21 @@ type jsonCommit struct {
 	// Patch is the diff of the commit, only with --patch; PatchTruncated says it was cut.
 	Patch          *string `json:"patch,omitempty"`
 	PatchTruncated bool    `json:"patch_truncated,omitempty"`
+	// Only with --graph.
+	*graphInfo
+}
+
+// graphInfo is the topology of a commit, for drawing a graph.
+type graphInfo struct {
+	FullHash string    `json:"full_hash"`
+	Parents  []string  `json:"parents"` // full hashes; empty for the first commit
+	Refs     []jsonRef `json:"refs"`    // the branches and tags that point at this commit
+}
+
+type jsonRef struct {
+	Name    string `json:"name"` // "main", "origin/main", "v1.2.0"
+	Kind    string `json:"kind"` // "branch", "remote", "tag" or "head" (a detached HEAD)
+	Current bool   `json:"current"`
 }
 
 type jsonFile struct {
@@ -388,10 +419,17 @@ func toJSONFiles(files []repository.FileChange) []jsonFile {
 	return out
 }
 
-func writeJSON(p output.Printer, entries []repository.LogEntry, patch bool) error {
+func writeJSON(p output.Printer, entries []repository.LogEntry, patch, graph bool) error {
 	out := make([]jsonCommit, 0, len(entries))
 	for _, e := range entries {
 		c := jsonCommit{Hash: e.Hash, Author: e.AuthorName, Email: e.AuthorEmail, Date: e.Date, Subject: e.Subject, Files: toJSONFiles(e.Files)}
+		if graph {
+			g := &graphInfo{FullHash: e.FullHash, Parents: append([]string{}, e.Parents...), Refs: make([]jsonRef, 0, len(e.Refs))}
+			for _, r := range e.Refs {
+				g.Refs = append(g.Refs, jsonRef{r.Name, r.Kind, r.Current})
+			}
+			c.graphInfo = g
+		}
 		if patch {
 			patchText := e.Patch
 			c.Patch, c.PatchTruncated = &patchText, e.Truncated

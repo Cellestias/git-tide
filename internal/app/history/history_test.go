@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
@@ -290,7 +291,7 @@ func TestShow(t *testing.T) {
 	testutil.Run(t, dir, "commit", "-q", "--author="+paulo, "-m", "feat: detail", "-m", "the body text")
 
 	var out, errOut bytes.Buffer
-	if err := Show(context.Background(), repo, "HEAD", false, output.Printer{Out: &out, Err: &errOut}); err != nil {
+	if err := Show(context.Background(), repo, "HEAD", false, false, output.Printer{Out: &out, Err: &errOut}); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"Paulo Silva <paulo@example.com>", "feat: detail", "the body text", "a.txt", "+2 -0", "1 file changed, +2 -0"} {
@@ -300,7 +301,7 @@ func TestShow(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := Show(context.Background(), repo, "HEAD", true, output.Printer{Out: &out, Err: &errOut}); err != nil {
+	if err := Show(context.Background(), repo, "HEAD", true, false, output.Printer{Out: &out, Err: &errOut}); err != nil {
 		t.Fatal(err)
 	}
 	var got struct {
@@ -315,7 +316,7 @@ func TestShow(t *testing.T) {
 	}
 
 	for _, bad := range []string{"nope", "--all", ""} {
-		if err := Show(context.Background(), repo, bad, false, output.Printer{Out: &out, Err: &errOut}); apperr.CodeOf(err) != apperr.CodeUsage {
+		if err := Show(context.Background(), repo, bad, false, false, output.Printer{Out: &out, Err: &errOut}); apperr.CodeOf(err) != apperr.CodeUsage {
 			t.Errorf("Show(%q): err = %v, want usage error", bad, err)
 		}
 	}
@@ -406,7 +407,7 @@ func TestSummaryCountsPerAuthor(t *testing.T) {
 }
 
 func TestCompareRejectsTheNewFilters(t *testing.T) {
-	for _, o := range []Options{{Search: "x"}, {Type: "feat"}, {Scope: "a"}, {Summary: true}} {
+	for _, o := range []Options{{Search: "x"}, {Type: "feat"}, {Scope: "a"}, {Summary: true}, {AllBranches: true}, {Graph: true}, {Patch: true}} {
 		if len(incompatible(o)) != 1 {
 			t.Errorf("%+v is not rejected by --compare", o)
 		}
@@ -509,5 +510,207 @@ func TestJSONHasNoPatchFieldWithoutTheFlag(t *testing.T) {
 	out, err := run(repo, dir, Options{JSON: true})
 	if err != nil || strings.Contains(out, `"patch"`) {
 		t.Fatalf("err=%v\n%s", err, out)
+	}
+}
+
+// graphSetup: main <- feature/x (2 commits) merged with side, a tag, a
+// remote-tracking ref and another branch that nothing merged.
+func graphSetup(t *testing.T) (*repository.Repository, string) {
+	t.Helper()
+	repo, dir := setup(t)
+	testutil.Run(t, dir, "checkout", "-q", "-b", "side", "main")
+	testutil.WriteFile(t, dir, "side.txt", "s\n")
+	testutil.Commit(t, dir, "feat: side")
+	testutil.Run(t, dir, "checkout", "-q", "-b", "elsewhere", "main")
+	testutil.WriteFile(t, dir, "else.txt", "e\n")
+	testutil.Commit(t, dir, "feat: elsewhere")
+	testutil.Run(t, dir, "checkout", "-q", "feature/x")
+	testutil.Run(t, dir, "merge", "-q", "--no-ff", "-m", "merge: side into x", "side")
+	testutil.Run(t, dir, "tag", "v1.0.0")
+	testutil.Run(t, dir, "update-ref", "refs/remotes/origin/main", "main")
+	testutil.Run(t, dir, "update-ref", "refs/remotes/origin/HEAD", "main")
+	return repo, dir
+}
+
+type graphCommit struct {
+	Hash     string   `json:"hash"`
+	FullHash string   `json:"full_hash"`
+	Subject  string   `json:"subject"`
+	Parents  []string `json:"parents"`
+	Refs     []struct {
+		Name    string `json:"name"`
+		Kind    string `json:"kind"`
+		Current bool   `json:"current"`
+	} `json:"refs"`
+}
+
+func readGraph(t *testing.T, out string) []graphCommit {
+	t.Helper()
+	var got []graphCommit
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	return got
+}
+
+func TestGraphGivesParentsRefsAndAParentsLastOrder(t *testing.T) {
+	repo, dir := graphSetup(t)
+	out, err := run(repo, dir, Options{JSON: true, Graph: true, AllBranches: true, Merges: true, Limit: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := readGraph(t, out)
+	bySubject := map[string]graphCommit{}
+	position := map[string]int{}
+	for i, c := range got {
+		bySubject[c.Subject] = c
+		position[c.FullHash] = i
+		if len(c.FullHash) != 40 || !strings.HasPrefix(c.FullHash, c.Hash) {
+			t.Errorf("%s: full hash %q does not extend %q", c.Subject, c.FullHash, c.Hash)
+		}
+	}
+	for _, want := range []string{"feat: initial commit", "feat: mine", "fix: theirs", "feat: side", "feat: elsewhere", "merge: side into x"} {
+		if _, ok := bySubject[want]; !ok {
+			t.Fatalf("%q missing from %d commits", want, len(got))
+		}
+	}
+	// A parent always comes after its children, which is what a lane layout needs.
+	for _, c := range got {
+		for _, p := range c.Parents {
+			if pos, ok := position[p]; !ok || pos <= position[c.FullHash] {
+				t.Errorf("%s: parent %s is at %d, child at %d", c.Subject, p, pos, position[c.FullHash])
+			}
+		}
+	}
+	if m := bySubject["merge: side into x"]; len(m.Parents) != 2 {
+		t.Errorf("merge parents = %v", m.Parents)
+	}
+	if root := bySubject["feat: initial commit"]; root.Parents == nil || len(root.Parents) != 0 {
+		t.Errorf("root parents = %#v, want []", root.Parents)
+	}
+	if !strings.Contains(out, `"parents": []`) {
+		t.Errorf("an empty parents list must print as [], not null:\n%s", out)
+	}
+
+	merge := bySubject["merge: side into x"]
+	if len(merge.Refs) != 2 || merge.Refs[0].Name != "feature/x" || merge.Refs[0].Kind != "branch" || !merge.Refs[0].Current || merge.Refs[1].Name != "v1.0.0" || merge.Refs[1].Kind != "tag" {
+		t.Errorf("merge refs = %+v", merge.Refs)
+	}
+	var main []string
+	for _, r := range bySubject["feat: initial commit"].Refs {
+		main = append(main, r.Kind+":"+r.Name)
+	}
+	sort.Strings(main)
+	if strings.Join(main, " ") != "branch:main remote:origin/main" {
+		t.Errorf("main refs = %v (origin/HEAD must be left out)", main)
+	}
+	if e := bySubject["feat: elsewhere"]; len(e.Refs) != 1 || e.Refs[0].Name != "elsewhere" {
+		t.Errorf("elsewhere refs = %+v", e.Refs)
+	}
+}
+
+func TestAllBranchesReadsWhatNoCurrentBranchHas(t *testing.T) {
+	repo, dir := graphSetup(t)
+	out, err := run(repo, dir, Options{})
+	if err != nil || strings.Contains(out, "feat: elsewhere") {
+		t.Fatalf("one branch must not show another's commits: err=%v\n%s", err, out)
+	}
+	out, err = run(repo, dir, Options{AllBranches: true})
+	if err != nil || !strings.Contains(out, "feat: elsewhere") || !strings.Contains(out, "feat: initial commit") {
+		t.Fatalf("--all-branches: err=%v\n%s", err, out)
+	}
+}
+
+func TestGraphDetachedHeadAndRefsDoNotLeakWithoutTheFlag(t *testing.T) {
+	repo, dir := graphSetup(t)
+	testutil.Run(t, dir, "checkout", "-q", "--detach", "feature/x")
+	testutil.Run(t, dir, "branch", "-D", "elsewhere")
+	out, err := run(repo, dir, Options{JSON: true, Graph: true, AllBranches: true, Merges: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var head []string
+	for _, c := range readGraph(t, out) {
+		for _, r := range c.Refs {
+			if r.Kind == "head" {
+				head = append(head, c.Subject)
+			}
+		}
+	}
+	if len(head) != 1 || head[0] != "merge: side into x" {
+		t.Errorf("detached HEAD seen at %v", head)
+	}
+	out, err = run(repo, dir, Options{JSON: true, AllBranches: true, Merges: true})
+	if err != nil || strings.Contains(out, `"parents"`) || strings.Contains(out, `"full_hash"`) || strings.Contains(out, `"refs"`) {
+		t.Fatalf("without --graph the JSON must stay as it was: err=%v\n%s", err, out)
+	}
+}
+
+func TestGraphAndAllBranchesUsageErrors(t *testing.T) {
+	repo, dir := graphSetup(t)
+	for name, o := range map[string]Options{
+		"--graph needs --json":      {Graph: true},
+		"--graph with --summary":    {Graph: true, JSON: true, Summary: true},
+		"--all-branches + --branch": {AllBranches: true, Branch: "side"},
+		"--all-branches + --remote": {AllBranches: true, Remote: true},
+		"--all-branches + --base":   {AllBranches: true, Base: "main"},
+		"--all-branches + range":    {AllBranches: true, Range: "main..side"},
+	} {
+		_, err := run(repo, dir, o)
+		var ae *apperr.Error
+		if !errors.As(err, &ae) || ae.Code != apperr.CodeUsage {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+func TestGraphKeepsTheFiltersWorking(t *testing.T) {
+	repo, dir := graphSetup(t)
+	out, err := run(repo, dir, Options{JSON: true, Graph: true, AllBranches: true, Member: "paulo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := readGraph(t, out)
+	if len(got) != 1 || got[0].Subject != "fix: theirs" || len(got[0].Parents) != 1 {
+		t.Fatalf("filtered graph = %+v", got)
+	}
+}
+
+func TestShowPatch(t *testing.T) {
+	repo, dir := setup(t)
+	show := func(rev string, asJSON bool) string {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		if err := Show(context.Background(), repo, rev, asJSON, true, output.Printer{Out: &out, Err: &errOut}); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+	out := show("HEAD", false)
+	for _, want := range []string{"fix: theirs", "src/rotation.py", "diff --git a/src/rotation.py", "+1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("text missing %q:\n%s", want, out)
+		}
+	}
+	var got struct {
+		Subject string  `json:"subject"`
+		Patch   *string `json:"patch"`
+		Files   []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(show("HEAD", true)), &got); err != nil || got.Patch == nil || !strings.Contains(*got.Patch, "+1") || len(got.Files) != 1 {
+		t.Fatalf("json: err=%v got=%+v", err, got)
+	}
+	// Without the flag the JSON has no patch field, as before.
+	var out2, errOut bytes.Buffer
+	if err := Show(context.Background(), repo, "HEAD", true, false, output.Printer{Out: &out2, Err: &errOut}); err != nil || strings.Contains(out2.String(), `"patch"`) {
+		t.Fatalf("no flag: err=%v\n%s", err, &out2)
+	}
+	// A tab in the file and a merge commit do not confuse it.
+	testutil.WriteFile(t, dir, "d.tsv", "1\t2\t3\n")
+	testutil.Commit(t, dir, "feat: tabs")
+	if err := json.Unmarshal([]byte(show("HEAD", true)), &got); err != nil || len(got.Files) != 1 || got.Files[0].Path != "d.tsv" || got.Patch == nil || !strings.Contains(*got.Patch, "+1\t2\t3") {
+		t.Fatalf("tabs: err=%v got=%+v", err, got)
 	}
 }
