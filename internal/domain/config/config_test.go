@@ -62,3 +62,27 @@ func TestBaseFor(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestSecurityLevel(t *testing.T) {
+	c := Default()
+	if c.Security.Level != "off" || c.SecurityLevel() != "off" {
+		t.Fatalf("the default must be off, so an existing setup does not change: %q", c.Security.Level)
+	}
+	for _, ok := range []string{"", "off", "low", "medium", "high", "HIGH"} {
+		c.Security.Level = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("security.level %q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"critical", "strict", "0", "low high"} {
+		c.Security.Level = bad
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), "security.level") {
+			t.Errorf("security.level %q: err = %v", bad, err)
+		}
+	}
+	c.Security.Level = "nonsense"
+	if c.SecurityLevel() != "off" {
+		t.Error("an unknown level must read as off, never as stricter")
+	}
+}
