@@ -4,7 +4,6 @@ package history
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -422,9 +421,7 @@ func printPatches(p output.Printer, entries []repository.LogEntry) {
 }
 
 func encode(p output.Printer, v any) error {
-	enc := json.NewEncoder(p.Out)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
+	if err := p.JSON(v); err != nil {
 		return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", err)
 	}
 	return nil

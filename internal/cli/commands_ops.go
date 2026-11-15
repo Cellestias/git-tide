@@ -43,7 +43,8 @@ func (e *env) pullCmd() *cobra.Command {
 }
 
 func (e *env) statusCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show the branch, how far it is from its upstream and base, and what changed",
 		Long: "Show the current branch, its distance from its upstream and from its base branch, any merge or rebase in progress, and the\n" +
@@ -54,9 +55,14 @@ func (e *env) statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return status.RunJSON(cmd.Context(), repo, cfg, e.p)
+			}
 			return status.Run(cmd.Context(), repo, cfg, e.p)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print JSON on stdout")
+	return cmd
 }
 
 func (e *env) diffCmd() *cobra.Command {
@@ -81,6 +87,7 @@ func (e *env) diffCmd() *cobra.Command {
 	f.BoolVar(&opts.Staged, "staged", false, "the index against the last commit")
 	f.StringVarP(&opts.File, "file", "f", "", "only this `file` or directory")
 	f.BoolVar(&opts.Patch, "patch", false, "print the full diff")
+	f.BoolVar(&opts.JSON, "json", false, "print JSON on stdout (the files, and the patch with --patch)")
 	return cmd
 }
 

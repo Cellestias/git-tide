@@ -24,25 +24,20 @@ const maxShown = 15
 // operation in progress, and the changed files in three groups. It reads local
 // data only: no fetch, so the remote numbers are as of the last fetch.
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
-	current, err := repo.CurrentBranch(ctx)
-	detached := errors.Is(err, repository.ErrDetachedHead)
-	if err != nil && !detached {
-		return apperr.Wrap(apperr.CodeExternal, "cannot determine current branch", "", err)
-	}
-	entries, err := repo.Status(ctx)
+	s, err := collect(ctx, repo, cfg)
 	if err != nil {
-		return apperr.Wrap(apperr.CodeExternal, "cannot read the working tree status", "", err)
+		return err
 	}
+	entries := s.entries
 
-	if detached {
-		head, _ := repo.ShortHead(ctx)
-		p.Line("%s HEAD detached at %s", p.Bold("On"), head)
+	if s.detached {
+		p.Line("%s HEAD detached at %s", p.Bold("On"), s.head)
 	} else {
-		p.Line("%s %s", p.Bold("On"), p.Bold(current))
-		reportDistance(ctx, repo, cfg, current, p)
+		p.Line("%s %s", p.Bold("On"), p.Bold(s.branch))
+		reportDistance(s, p)
 	}
-	if op, _ := repo.InProgressOperation(ctx); op != "" {
-		p.Warn("a %s is in progress: finish it with `gtide continue` or give up with `gtide abort`", op)
+	if s.operation != "" {
+		p.Warn("a %s is in progress: finish it with `gtide continue` or give up with `gtide abort`", s.operation)
 	}
 
 	var conflicts, staged, unstaged, untracked []string
@@ -78,6 +73,62 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, p 
 	return nil
 }
 
+// snapshot is what `gtide status` reads from the repository.
+type snapshot struct {
+	branch    string
+	detached  bool
+	head      string // short hash, set when detached
+	operation string // "merge", "rebase"... or ""
+	upstream  *distanceTo
+	base      *distanceTo // nil on the base branch itself, or when it cannot be found
+	entries   []repository.StatusEntry
+}
+
+// distanceTo is how far the branch is from another ref. Known is false when
+// the counts could not be computed (the name is still set).
+type distanceTo struct {
+	Name          string
+	Ahead, Behind int
+	Known         bool
+}
+
+func collect(ctx context.Context, repo *repository.Repository, cfg domain.Config) (snapshot, error) {
+	var s snapshot
+	current, err := repo.CurrentBranch(ctx)
+	s.detached = errors.Is(err, repository.ErrDetachedHead)
+	if err != nil && !s.detached {
+		return s, apperr.Wrap(apperr.CodeExternal, "cannot determine current branch", "", err)
+	}
+	s.branch = current
+	if s.entries, err = repo.Status(ctx); err != nil {
+		return s, apperr.Wrap(apperr.CodeExternal, "cannot read the working tree status", "", err)
+	}
+	s.operation, _ = repo.InProgressOperation(ctx)
+	if s.detached {
+		s.head, _ = repo.ShortHead(ctx)
+		return s, nil
+	}
+	if up := repo.Upstream(ctx); up != "" {
+		s.upstream = &distanceTo{Name: up}
+		if a, b, err := repo.AheadBehind(ctx, up, "refs/heads/"+current); err == nil {
+			s.upstream.Ahead, s.upstream.Behind, s.upstream.Known = a, b, true
+		}
+	}
+	base := cfg.BaseFor(current)
+	if base == current {
+		return s, nil
+	}
+	for _, ref := range []string{"refs/remotes/" + cfg.Remote + "/" + base, "refs/heads/" + base} {
+		if ok, err := repo.CommitExists(ctx, ref); err == nil && ok {
+			if a, b, err := repo.AheadBehind(ctx, ref, "refs/heads/"+current); err == nil {
+				s.base = &distanceTo{Name: base, Ahead: a, Behind: b, Known: true}
+			}
+			break
+		}
+	}
+	return s, nil
+}
+
 func label(e repository.StatusEntry, x, y byte) string {
 	code := strings.TrimSpace(string([]byte{x, y}))
 	if code == "" {
@@ -104,26 +155,16 @@ func group(p output.Printer, title string, lines []string, paint func(string) st
 	}
 }
 
-// reportDistance prints the upstream and base lines when they can be computed.
-func reportDistance(ctx context.Context, repo *repository.Repository, cfg domain.Config, current string, p output.Printer) {
-	if up := repo.Upstream(ctx); up != "" {
-		if a, b, err := repo.AheadBehind(ctx, up, "refs/heads/"+current); err == nil {
-			p.Line("   %s %s: %s", p.Dim("upstream"), up, distance(a, b))
-		}
-	} else {
+// reportDistance prints the upstream and base lines when they were computed.
+func reportDistance(s snapshot, p output.Printer) {
+	switch {
+	case s.upstream == nil:
 		p.Line("   %s %s", p.Dim("upstream"), "none yet (publish with `gtide push`)")
+	case s.upstream.Known:
+		p.Line("   %s %s: %s", p.Dim("upstream"), s.upstream.Name, distance(s.upstream.Ahead, s.upstream.Behind))
 	}
-	base := cfg.BaseFor(current)
-	if base == current {
-		return
-	}
-	for _, ref := range []string{"refs/remotes/" + cfg.Remote + "/" + base, "refs/heads/" + base} {
-		if ok, err := repo.CommitExists(ctx, ref); err == nil && ok {
-			if a, b, err := repo.AheadBehind(ctx, ref, "refs/heads/"+current); err == nil {
-				p.Line("   %s %s: %s", p.Dim("base    "), base, distance(a, b))
-			}
-			return
-		}
+	if s.base != nil {
+		p.Line("   %s %s: %s", p.Dim("base    "), s.base.Name, distance(s.base.Ahead, s.base.Behind))
 	}
 }
 
@@ -144,6 +185,7 @@ type DiffOptions struct {
 	Staged bool   // the index against HEAD instead of the work tree against the index
 	File   string // limit to this path, relative to Cwd
 	Patch  bool   // the full diff instead of the per-file summary
+	JSON   bool   // print JSON on stdout: the files, and the patch with Patch
 	Cwd    string
 }
 
@@ -156,7 +198,7 @@ func Diff(ctx context.Context, repo *repository.Repository, opts DiffOptions, p 
 			return err
 		}
 		path = paths[0]
-		if _, err := os.Lstat(filepath.Join(repo.Root, filepath.FromSlash(path))); err != nil && !opts.Staged {
+		if _, err := os.Lstat(filepath.Join(repo.Root, filepath.FromSlash(path))); err != nil && !opts.Staged && !opts.JSON {
 			p.Note("%s is not in the working tree; showing what Git knows about it", path)
 		}
 	}
@@ -165,6 +207,9 @@ func Diff(ctx context.Context, repo *repository.Repository, opts DiffOptions, p 
 		where = "staged changes against the last commit"
 	}
 
+	if opts.JSON {
+		return diffJSON(ctx, repo, opts, path, p)
+	}
 	if opts.Patch {
 		out, err := repo.ChangePatch(ctx, opts.Staged, path)
 		if err != nil {
