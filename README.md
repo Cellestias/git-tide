@@ -20,6 +20,7 @@ Git stays the source of truth. Tide runs the Git you already have, needs no serv
 - [Quick start](#quick-start)
 - [Commands](#commands)
 - [Configuration](#configuration)
+- [Security alerts](#security-alerts)
 - [Authentication](#authentication)
 - [What the hooks do](#what-the-hooks-do)
 - [Exit codes](#exit-codes)
@@ -635,6 +636,9 @@ secrets:
     - name: internal_token
       pattern: "corp_[A-Za-z0-9]{32}"
 
+security:
+  level: off # off, low, medium or high (see Security alerts)
+
 hooks:
   manage: true
 ```
@@ -652,6 +656,7 @@ hooks:
 | `commits.require_scope` | `false` | Require `type(scope):` instead of `type:`. |
 | `secrets.enabled` | `true` | Scan staged changes for likely secrets. |
 | `secrets.custom_patterns` | none | Extra detectors committed with the project: `name` (letters, digits, spaces, `.`, `_`, `-`) and `pattern` (Go regular expression). At most 500. Prefer `secrets.patterns` in `secret.tide.yml`, which is not committed. |
+| `security.level` | `off` | How strict Tide is about the repository's security alerts: `off`, `low`, `medium` or `high`. See [Security alerts](#security-alerts). |
 | `hooks.manage` | `true` | Whether `gtide init` installs hooks. |
 
 ### Providers
@@ -689,6 +694,52 @@ branches:
 ```
 
 For a one-off exception, pass the base explicitly: `gtide update main` or `gtide pr --base main`.
+
+## Security alerts
+
+On GitHub, Tide can look at the repository's open **Dependabot** alerts (vulnerable dependencies) and **code scanning** alerts (findings in your code), warn you about them, and hold back a push. You choose how strict it is with `security.level` in `.tide.yml`:
+
+| Level | At commit | At push |
+|---|---|---|
+| `off` (default) | nothing | nothing |
+| `low` | nothing (no network call, commits stay fast) | lists the alerts; never blocks |
+| `medium` | lists the alerts | lists them; **blocks while a critical alert is open** |
+| `high` | lists the alerts | lists them; **blocks while any alert is open**, and when the alerts cannot be checked |
+
+At every level the alerts are listed with their severity, the **file** each one is about (the `package.json`, `go.mod` or lockfile that holds the dependency, or the file and line of a code scanning finding), and the fixed version when there is one. A commit is never undone or refused because of an alert: the list only warns.
+
+```text
+$ gtide push
+! 2 open security alerts on acme/tool (1 critical, 1 high)
+    CRITICAL  package.json     npm:lodash: Prototype pollution (fixed in 4.17.21)
+    HIGH      backend/go.mod   go:golang.org/x/net: HTTP/2 rapid reset
+✗ push blocked by security level high: 2 open alerts (1 critical, 1 high)
+  hint: fix them: a push that changes the file of an alert, such as backend/go.mod or package.json, is allowed so the fix can be sent. `gtide security` lists them
+```
+
+**The fix is never blocked.** Alerts belong to the repository, not to your commit, so a rule that stopped every push would stop the push that fixes the alert. Tide lets a push through when it changes the file an alert is about: every blocking alert on a file the push touches is treated as a fix in progress. Alerts on files the push does not touch still hold it back.
+
+Where it applies:
+
+- `gtide push` and `gtide pr` check before anything is pushed or opened.
+- The pre-push hook checks a plain `git push` too, once (not again when `gtide push` just did).
+- `gtide commit` and `gtide save` list the alerts after the commit, at `medium` and `high`.
+- `git push --no-verify` skips the hook, like any hook. `gtide push` has no skip: to change the rule, change `security.level`, which is a reviewed change to a committed file.
+
+When the alerts cannot be read (no network, no token, a token without rights), `low` and `medium` warn and carry on; `high` holds the push, because it asked for a guarantee. A feature that is simply **not enabled** on the repository (code scanning is not used everywhere) is not a failure and never blocks.
+
+The alerts are read from the repository's default branch, so a fix shows up as resolved once it is merged there.
+
+**Requirements.** GitHub only: GitLab has no alerts API Tide can read on every plan, so on a GitLab repository the level has no effect, and Tide says so instead of pretending to protect. Reading alerts needs `GITHUB_TOKEN` (or `provider_token` in `secret.tide.yml`) with the `security_events` scope, or access to the repository for a fine-grained token with *Dependabot alerts* and *Code scanning alerts* read permission. Without one, GitHub answers as if the alerts did not exist, and Tide reports that it could not look.
+
+### `gtide security`
+
+```bash
+gtide security          # the open alerts, most severe first, with their files
+gtide security --json   # the same as JSON (see docs/json.md)
+```
+
+It works at every level, even `off`: the level decides when Tide warns and what it blocks; this command only looks. It fails (exit 5) when none of the sources could be read, so a script can tell "no alerts" from "could not look". `gtide doctor` shows the configured level and whether it can work with your provider.
 
 ## Authentication
 
@@ -764,7 +815,7 @@ To remove Tide's hooks, delete the three files in the hooks directory (`git rev-
 | `1` | General failure, including merge/rebase conflicts in `gtide update` and problems found by `gtide doctor`. |
 | `2` | Invalid command usage or arguments. |
 | `3` | Configuration invalid, or missing where required (including a missing provider token for `gtide pr`). |
-| `4` | A policy rejected the operation (protected branch, commit message, secret). |
+| `4` | A policy rejected the operation (protected branch, commit message, secret, security level). |
 | `5` | External failure: Git, the network, or the provider API. |
 | `6` | Unsafe repository state; nothing was changed. |
 
