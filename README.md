@@ -797,7 +797,7 @@ It works at every level, even `off`: the level decides when Tide warns and what 
 
 `gtide pr` needs a token with write access to pull / merge requests; `gtide pr list`, `pr view`, `pr status`, `gtide review` and `gtide branch --hosted` only need one for private repositories (and `--author me` / `--assignee me` need one to resolve who you are). Pushing uses Git's own authentication, not this token.
 
-- **GitHub**: a fine-grained token with "Pull requests: Read and write" and "Contents: Read" on the repository, or a classic token with the `repo` scope. To read security alerts (`security.level`, `gtide security`) it also needs "Dependabot alerts: Read" and "Code scanning alerts: Read", or the classic `security_events` scope: see [The token for the alerts](#the-token-for-the-alerts).
+- **GitHub**: a fine-grained token with "Pull requests: Read and write" **and** "Contents: Read" on the repository, or a classic token with the `repo` scope. Without "Contents: Read" GitHub refuses the request with "not all refs are readable". To read security alerts (`security.level`, `gtide security`) it also needs "Dependabot alerts: Read" and "Code scanning alerts: Read", or the classic `security_events` scope: see [The token for the alerts](#the-token-for-the-alerts).
 - **GitLab**: a personal, project or group access token with the `api` scope (role Developer or higher).
 
 ### `secret.tide.yml`

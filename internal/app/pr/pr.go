@@ -127,8 +127,12 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 	switch {
 	case errors.As(err, &verr):
 		// the message is remote-controlled: use the cleaned text, not the wrapped cause
-		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s rejected the %s: %s", providerLabel(c), noun, clean(verr.Message)),
-			"the branch was pushed; fix the problem and re-run `gtide pr`")
+		hint := "the branch was pushed; fix the problem and re-run `gtide pr`"
+		if strings.Contains(strings.ToLower(verr.Message), "not all refs are readable") {
+			// The token may open requests but cannot read the repository: a fine-grained token made for pull requests only.
+			hint = "the branch was pushed. The token can open " + noun + "s but cannot read the repository's contents: a fine-grained GitHub token also needs \"Contents: Read\". Add it, then re-run `gtide pr`"
+		}
+		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s rejected the %s: %s", providerLabel(c), noun, clean(verr.Message)), hint)
 	case errors.Is(err, provider.ErrNotFound):
 		return apperr.New(apperr.CodeExternal, fmt.Sprintf("%s not found or the token cannot write to it", ghRepo),
 			c.TokenEnv()+" needs "+noun+" write access; the branch was pushed")

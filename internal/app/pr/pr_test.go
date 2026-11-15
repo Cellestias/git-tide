@@ -247,3 +247,21 @@ func TestPRExplainsAForbiddenToken(t *testing.T) {
 		t.Errorf("a 500 is not a token problem: %q", apperr.HintOf(err))
 	}
 }
+
+func TestPRExplainsAMissingContentsPermission(t *testing.T) {
+	repo, _, _ := setup(t)
+	creator := &fakeCreator{Client: &github.Client{}, err: &provider.ErrValidation{Message: "Validation Failed: not all refs are readable"}}
+	_, _, err := run(repo, creator, Options{Title: "t", Body: "b"})
+	h := apperr.HintOf(err)
+	for _, want := range []string{"the branch was pushed", "Contents: Read", "re-run `gtide pr`"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("hint lacks %q: %q", want, h)
+		}
+	}
+	// any other validation failure keeps the plain hint
+	creator.err = &provider.ErrValidation{Message: "A pull request already exists for acme:feature."}
+	_, _, err = run(repo, creator, Options{Title: "t", Body: "b"})
+	if strings.Contains(apperr.HintOf(err), "Contents") || !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("err=%v hint=%q", err, apperr.HintOf(err))
+	}
+}
