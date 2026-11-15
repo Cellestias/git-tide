@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	appsecurity "github.com/cellestias/git-tide/internal/app/security"
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/domain/branch"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
@@ -33,6 +34,9 @@ type Options struct {
 	// Ask reads one line of free text (the title and body prompts). Nil means
 	// non-interactive: description.pr.md is used when present, else the defaults.
 	Ask func(prompt string) (string, error)
+	// Security is the alerts check before the branch is pushed. It gets the files
+	// the push changes and may stop it. Nil means no check.
+	Security func(ctx context.Context, touched []string) error
 }
 
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, opts Options, p output.Printer) error {
@@ -82,6 +86,17 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 	}
 	if changes, _ := repo.TrackedChanges(ctx); len(changes) > 0 {
 		p.Warn("%d file(s) have uncommitted changes; they are not part of the pull request", len(changes))
+	}
+
+	if opts.Security != nil {
+		touched, err := repo.PushedPaths(ctx, cfg.Remote, "refs/heads/"+current)
+		if err != nil {
+			touched = nil
+		}
+		if err := opts.Security(ctx, touched); err != nil {
+			return err
+		}
+		defer appsecurity.MarkChecked()()
 	}
 
 	title, body, err := compose(repo.Root, current, base, subjects, opts, p)

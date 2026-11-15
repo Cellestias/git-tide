@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"reflect"
+	"sort"
 	"testing"
 
+	appsecurity "github.com/cellestias/git-tide/internal/app/security"
 	"github.com/cellestias/git-tide/internal/apperr"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/git/executor"
@@ -179,5 +183,78 @@ func TestFirstPublishOfAProtectedBranchIsAllowed(t *testing.T) {
 	}
 	if err := run(repo, domain.Default(), Options{Force: true}); code(err) != apperr.CodePolicy {
 		t.Fatalf("force push of main: err = %v, want policy error", err)
+	}
+}
+
+func TestPushAsksTheSecurityCheckWithTheFilesBeingPushed(t *testing.T) {
+	repo, dir, bare := setup(t)
+	testutil.Run(t, dir, "checkout", "-q", "-b", "feature/sec")
+	testutil.WriteFile(t, dir, "package.json", "{}\n")
+	testutil.WriteFile(t, dir, "src/a.go", "package a\n")
+	testutil.Commit(t, dir, "feat: sec")
+
+	var got []string
+	err := run(repo, domain.Default(), Options{Security: func(_ context.Context, touched []string) error {
+		got = touched
+		return nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, []string{"package.json", "src/a.go"}) {
+		t.Errorf("the check got %v", got)
+	}
+	if testutil.Run(t, bare, "rev-parse", "feature/sec") != testutil.Run(t, dir, "rev-parse", "HEAD") {
+		t.Error("a check that passes must let the push through")
+	}
+	if os.Getenv(appsecurity.CheckedEnv) != "" {
+		t.Error("the mark that tells the hook the check was done must not outlive the push")
+	}
+}
+
+func TestPushStoppedBySecurityPushesNothing(t *testing.T) {
+	repo, dir, bare := setup(t)
+	commitOnBranch(t, dir, "feature/blocked")
+	stop := apperr.New(apperr.CodePolicy, "push blocked by security level high: 1 open alert (1 critical)", "")
+	err := run(repo, domain.Default(), Options{Security: func(context.Context, []string) error { return stop }})
+	if code(err) != apperr.CodePolicy {
+		t.Fatalf("err = %v", err)
+	}
+	if out := testutil.Run(t, bare, "branch", "--list", "feature/*"); out != "" {
+		t.Errorf("the branch reached the remote: %q", out)
+	}
+	if os.Getenv(appsecurity.CheckedEnv) != "" {
+		t.Error("a stopped push must not leave the mark behind")
+	}
+}
+
+func TestPushSecurityRunsAfterTheProtectionAndAlsoForAForcePush(t *testing.T) {
+	repo, dir, _ := setup(t) // on main, protected
+	asked := false
+	err := run(repo, domain.Default(), Options{Security: func(context.Context, []string) error { asked = true; return nil }})
+	if code(err) != apperr.CodePolicy || asked {
+		t.Errorf("protected: err=%v asked=%v: a refused push is not worth a network call", err, asked)
+	}
+
+	commitOnBranch(t, dir, "feature/f")
+	if err := run(repo, domain.Default(), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFile(t, dir, "more.txt", "m\n")
+	testutil.Commit(t, dir, "feat: more")
+	testutil.Run(t, dir, "commit", "-q", "--amend", "-m", "feat: more, reworded")
+	asked = false
+	err = run(repo, domain.Default(), Options{Force: true, Security: func(context.Context, []string) error { asked = true; return nil }})
+	if err != nil || !asked {
+		t.Errorf("force: err=%v asked=%v", err, asked)
+	}
+}
+
+func TestPushWithoutASecurityCheckIsAsBefore(t *testing.T) {
+	repo, dir, _ := setup(t)
+	commitOnBranch(t, dir, "feature/plain")
+	if err := run(repo, domain.Default(), Options{}); err != nil {
+		t.Fatal(err)
 	}
 }

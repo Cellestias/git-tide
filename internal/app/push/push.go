@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	appsecurity "github.com/cellestias/git-tide/internal/app/security"
 	"github.com/cellestias/git-tide/internal/apperr"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/domain/policy"
@@ -19,6 +20,9 @@ type Options struct {
 	Force bool
 	// Confirm is asked before a forced push. Nil means "proceed".
 	Confirm func(prompt string) (bool, error)
+	// Security is the alerts check. It gets the files the push changes and may
+	// stop it. Nil means no check.
+	Security func(ctx context.Context, touched []string) error
 }
 
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, opts Options, p output.Printer) error {
@@ -50,6 +54,17 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, op
 
 	if changes, _ := repo.TrackedChanges(ctx); len(changes) > 0 {
 		p.Warn("%d file(s) have uncommitted changes; they are not pushed", len(changes))
+	}
+
+	if opts.Security != nil {
+		touched, err := repo.PushedPaths(ctx, cfg.Remote, "refs/heads/"+current)
+		if err != nil {
+			touched = nil // unknown files: nothing is exempt
+		}
+		if err := opts.Security(ctx, touched); err != nil {
+			return err
+		}
+		defer appsecurity.MarkChecked()() // the pre-push hook would ask the same again
 	}
 
 	if opts.Force {

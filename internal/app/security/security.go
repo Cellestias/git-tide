@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -32,6 +33,23 @@ const (
 // hook, which would ask the same question again, knows it was just answered.
 // It only silences the hook: the command's own check is not skippable this way.
 const CheckedEnv = checkedEnvName
+
+// MarkChecked tells the pre-push hook, for as long as the returned function has
+// not been called, that the check just ran. Call it before running `git push`.
+func MarkChecked() (undo func()) {
+	prev, had := os.LookupEnv(CheckedEnv)
+	_ = os.Setenv(CheckedEnv, "1")
+	return func() {
+		if had {
+			_ = os.Setenv(CheckedEnv, prev)
+		} else {
+			_ = os.Unsetenv(CheckedEnv)
+		}
+	}
+}
+
+// AlreadyChecked reports whether a command that runs git push has just checked.
+func AlreadyChecked() bool { return os.Getenv(CheckedEnv) == "1" }
 
 // Resolver identifies the provider and the hosted repository behind the remote.
 type Resolver func(ctx context.Context) (provider.Provider, provider.Repo, error)

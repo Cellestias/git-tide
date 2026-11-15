@@ -196,3 +196,35 @@ func TestDefaultBodyCapsList(t *testing.T) {
 		t.Errorf("body = %q", body)
 	}
 }
+
+func TestPRAsksTheSecurityCheckBeforePushingAndStopsWhenItDoes(t *testing.T) {
+	repo, _, bare := setup(t)
+	creator := &fakeCreator{Client: &github.Client{}}
+
+	var got []string
+	stop := apperr.New(apperr.CodePolicy, "push blocked by security level high: 1 open alert (1 critical)", "")
+	_, _, err := run(repo, creator, Options{Title: "t", Body: "b", Security: func(_ context.Context, touched []string) error {
+		got = touched
+		return stop
+	}})
+	if apperr.CodeOf(err) != apperr.CodePolicy {
+		t.Fatalf("err = %v", err)
+	}
+	if len(got) != 1 || got[0] != "login.txt" {
+		t.Errorf("the check got %v, want the file the push would send", got)
+	}
+	if creator.calls != 0 {
+		t.Error("no pull request may be opened when the push is held back")
+	}
+	if o := testutil.Run(t, bare, "branch", "--list", "feature/*"); o != "" {
+		t.Errorf("the branch reached the remote: %q", o)
+	}
+
+	// and when it passes, the request is opened as usual
+	if _, _, err := run(repo, creator, Options{Title: "t", Body: "b", Security: func(context.Context, []string) error { return nil }}); err != nil {
+		t.Fatal(err)
+	}
+	if creator.calls != 1 {
+		t.Errorf("calls = %d", creator.calls)
+	}
+}
