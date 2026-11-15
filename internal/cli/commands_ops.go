@@ -119,6 +119,7 @@ func (e *env) stashCmd() *cobra.Command {
 	push := &cobra.Command{Use: "push", Short: "Stash the local changes (same as `gtide stash`)", Args: cobra.NoArgs, RunE: run}
 	push.Flags().StringVarP(&message, "message", "m", "", "a note to find the stash by")
 	push.Flags().BoolVarP(&untracked, "untracked", "u", false, "also stash untracked files")
+	var listJSON bool
 	list := &cobra.Command{
 		Use: "list", Short: "List the stashes", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -126,9 +127,10 @@ func (e *env) stashCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return stash.List(cmd.Context(), repo, e.p)
+			return stash.List(cmd.Context(), repo, listJSON, e.p)
 		},
 	}
+	list.Flags().BoolVar(&listJSON, "json", false, "print JSON on stdout")
 	pop := &cobra.Command{
 		Use: "pop [stash]", Short: "Apply a stash and remove it", Args: maxArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -171,7 +173,10 @@ func first(args []string) string {
 }
 
 func (e *env) tagCmd() *cobra.Command {
-	var limit int
+	var (
+		limit  int
+		asJSON bool
+	)
 	cmd := &cobra.Command{
 		Use:   "tag [create|push|delete]",
 		Short: "List, create, publish and delete version tags",
@@ -186,10 +191,11 @@ func (e *env) tagCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return tag.List(cmd.Context(), repo, limit, e.p)
+			return tag.List(cmd.Context(), repo, limit, asJSON, e.p)
 		},
 	}
 	cmd.Flags().IntVarP(&limit, "limit", "n", tag.DefaultLimit, "maximum number of tags (0 for all)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the list as JSON on stdout")
 
 	var (
 		copts tag.CreateOptions

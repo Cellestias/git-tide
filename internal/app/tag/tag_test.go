@@ -3,6 +3,7 @@ package tag
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -55,7 +56,7 @@ func TestCreateListPushDelete(t *testing.T) {
 	}
 
 	p, buf := printer()
-	if err := List(ctx, repo, 0, p); err != nil || !strings.Contains(buf.String(), "v1.0.0") || !strings.Contains(buf.String(), "annotated") {
+	if err := List(ctx, repo, 0, false, p); err != nil || !strings.Contains(buf.String(), "v1.0.0") || !strings.Contains(buf.String(), "annotated") {
 		t.Fatalf("list: err=%v\n%s", err, buf)
 	}
 
@@ -149,5 +150,50 @@ func TestDeleteNeedsConfirmationAndAKnownTag(t *testing.T) {
 	}
 	if got := testutil.Run(t, dir, "tag", "-l"); got != "v1.0.0" {
 		t.Errorf("a declined delete removed the tag: %q", got)
+	}
+}
+
+func TestListJSON(t *testing.T) {
+	repo, dir, _ := setup(t)
+	ctx := context.Background()
+	var out, errOut bytes.Buffer
+	p := output.Printer{Out: &out, Err: &errOut}
+
+	// No tags is an empty list, not a sentence.
+	if err := List(ctx, repo, 0, true, p); err != nil || strings.TrimSpace(out.String()) != "[]" {
+		t.Fatalf("empty: err=%v %q", err, out.String())
+	}
+
+	if err := Create(ctx, repo, domain.Default(), "v1.0.0", CreateOptions{Message: "First release"}, p); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Run(t, dir, "tag", "v1.1.0") // lightweight
+	head := testutil.Run(t, dir, "rev-parse", "HEAD")
+
+	out.Reset()
+	if err := List(ctx, repo, 0, true, p); err != nil {
+		t.Fatal(err)
+	}
+	var got []struct {
+		Name      string `json:"name"`
+		Annotated bool   `json:"annotated"`
+		Commit    string `json:"commit"`
+		Message   string `json:"message"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, &out)
+	}
+	if len(got) != 2 || got[0].Name != "v1.1.0" || got[0].Annotated || got[1].Name != "v1.0.0" || !got[1].Annotated || got[1].Message != "First release" {
+		t.Fatalf("tags = %+v", got)
+	}
+	for _, g := range got {
+		if g.Commit != head {
+			t.Errorf("%s points at %q, want the commit %q (an annotated tag is looked through)", g.Name, g.Commit, head)
+		}
+	}
+
+	out.Reset()
+	if err := List(ctx, repo, 1, true, p); err != nil || strings.Count(out.String(), `"name"`) != 1 {
+		t.Errorf("limit: err=%v\n%s", err, &out)
 	}
 }

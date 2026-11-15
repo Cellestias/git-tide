@@ -3,10 +3,12 @@ package stash
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/git/executor"
@@ -62,7 +64,7 @@ func TestPushListPopDrop(t *testing.T) {
 	}
 
 	p, buf = printer()
-	if err := List(ctx, repo, p); err != nil || !strings.Contains(buf.String(), "half done") || !strings.Contains(buf.String(), "stash@{0}") {
+	if err := List(ctx, repo, false, p); err != nil || !strings.Contains(buf.String(), "half done") || !strings.Contains(buf.String(), "stash@{0}") {
 		t.Fatalf("list: err=%v\n%s", err, buf)
 	}
 
@@ -122,5 +124,35 @@ func TestRefusesDuringAMergeAndConflictOnPop(t *testing.T) {
 	}
 	if list, _ := repo.StashList(ctx); len(list) != 1 {
 		t.Errorf("a stash that did not apply must be kept, have %d", len(list))
+	}
+}
+
+func TestListJSON(t *testing.T) {
+	repo, dir := setup(t)
+	ctx := context.Background()
+	var out bytes.Buffer
+	p := output.Printer{Out: &out, Err: &out}
+	if err := List(ctx, repo, true, p); err != nil || strings.TrimSpace(out.String()) != "[]" {
+		t.Fatalf("empty: err=%v %q", err, out.String())
+	}
+
+	testutil.WriteFile(t, dir, "README.md", "work in progress\n")
+	if err := Push(ctx, repo, "half done", false, p); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := List(ctx, repo, true, p); err != nil {
+		t.Fatal(err)
+	}
+	var got []struct {
+		Ref     string    `json:"ref"`
+		Date    time.Time `json:"date"`
+		Message string    `json:"message"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, &out)
+	}
+	if len(got) != 1 || got[0].Ref != "stash@{0}" || !strings.Contains(got[0].Message, "half done") || time.Since(got[0].Date) > time.Minute || got[0].Date.IsZero() {
+		t.Fatalf("stashes = %+v", got)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/git/repository"
@@ -85,10 +86,13 @@ func Push(ctx context.Context, repo *repository.Repository, message string, untr
 }
 
 // List prints the stashes, newest first.
-func List(ctx context.Context, repo *repository.Repository, p output.Printer) error {
+func List(ctx context.Context, repo *repository.Repository, asJSON bool, p output.Printer) error {
 	list, err := repo.StashList(ctx)
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot list the stashes", "", err)
+	}
+	if asJSON {
+		return writeJSON(p, list)
 	}
 	if len(list) == 0 {
 		p.Info("No stashes")
@@ -166,4 +170,21 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+type jsonStash struct {
+	Ref     string    `json:"ref"` // stash@{0}
+	Date    time.Time `json:"date"`
+	Message string    `json:"message"`
+}
+
+func writeJSON(p output.Printer, list []repository.StashEntry) error {
+	out := make([]jsonStash, 0, len(list))
+	for _, s := range list {
+		out = append(out, jsonStash{s.Ref, s.At, s.Message})
+	}
+	if err := p.JSON(out); err != nil {
+		return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", err)
+	}
+	return nil
 }
