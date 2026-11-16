@@ -3,8 +3,10 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/cellestias/git-tide/internal/git/executor"
@@ -225,5 +227,78 @@ func TestChangedSince(t *testing.T) {
 	}
 	if _, err := repo.ChangedSince(ctx, "refs/heads/nope", "HEAD"); err == nil {
 		t.Error("an unknown base must be an error")
+	}
+}
+
+func TestListFiles(t *testing.T) {
+	dir := testutil.NewRepo(t)
+	repo := New(executor.Exec{}, dir)
+	testutil.WriteFile(t, dir, ".gitignore", "ignored.txt\n")
+	testutil.WriteFile(t, dir, "ignored.txt", "i\n")
+	testutil.WriteFile(t, dir, "sub/é b.txt", "t\n")
+	testutil.Run(t, dir, "add", "sub", ".gitignore")
+	testutil.Commit(t, dir, "feat: files")
+	testutil.WriteFile(t, dir, "new/file.txt", "n\n")
+
+	tracked, untracked, err := repo.ListFiles(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(tracked)
+	if want := []string{".gitignore", "README.md", "sub/é b.txt"}; !reflect.DeepEqual(tracked, want) {
+		t.Errorf("tracked = %q, want %q (accents and spaces kept)", tracked, want)
+	}
+	if want := []string{"new/file.txt"}; !reflect.DeepEqual(untracked, want) {
+		t.Errorf("untracked = %q, want %q (an ignored file is not listed, and a new directory lists its files)", untracked, want)
+	}
+}
+
+func TestHistoryAdditions(t *testing.T) {
+	dir := testutil.NewRepo(t)
+	repo := New(executor.Exec{}, dir)
+	ctx := context.Background()
+	testutil.WriteFile(t, dir, "a.txt", "one\ntwo\n")
+	testutil.Commit(t, dir, "feat: a")
+	testutil.WriteFile(t, dir, "a.txt", "one\ntwo\nthree\n")
+	testutil.WriteFile(t, dir, "sub/b b.txt", "b\n")
+	testutil.Commit(t, dir, "feat: more")
+	testutil.WriteFile(t, dir, "bin.dat", "\x00\x01\x02")
+	testutil.Run(t, dir, "rm", "-q", "a.txt")
+	testutil.Commit(t, dir, "chore: delete and a binary") // a deletion adds nothing; a binary gives no lines
+	testutil.Run(t, dir, "checkout", "-q", "-b", "side")
+	testutil.WriteFile(t, dir, "side.txt", "s\n")
+	testutil.Commit(t, dir, "feat: side")
+	testutil.Run(t, dir, "checkout", "-q", "main")
+
+	commits, err := repo.HistoryAdditions(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, c := range commits {
+		if len(c.Hash) != 40 || c.Date.IsZero() {
+			t.Errorf("commit = %+v", c)
+		}
+		for _, l := range c.Lines {
+			found = append(found, fmt.Sprintf("%s:%d=%s", l.Path, l.Line, l.Text))
+		}
+	}
+	sort.Strings(found)
+	for _, want := range []string{"a.txt:1=one", "a.txt:2=two", "a.txt:3=three", "sub/b b.txt:1=b", "side.txt:1=s"} {
+		i := sort.SearchStrings(found, want)
+		if i == len(found) || found[i] != want {
+			t.Errorf("missing %q in %q (line numbers are those of the file as the commit left it; every branch is read)", want, found)
+		}
+	}
+	for _, f := range found {
+		if strings.HasPrefix(f, "bin.dat") {
+			t.Errorf("a binary file gives no lines: %q", f)
+		}
+	}
+	if newest, _ := repo.HistoryAdditions(ctx, 1); len(newest) != 1 {
+		t.Errorf("the limit counts commits: %d", len(newest))
+	}
+	if _, err := repo.HistoryAdditions(ctx, 0); err == nil {
+		t.Error("a limit below 1 must be refused")
 	}
 }

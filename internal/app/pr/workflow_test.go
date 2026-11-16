@@ -154,7 +154,7 @@ func TestViewShowsEverything(t *testing.T) {
 		commits: []provider.CommitSummary{{SHA: "abcdef123456", Subject: "feat: login"}},
 	}
 	out, _, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
-		return View(ctx, repo, cfg, h, "42", p)
+		return View(ctx, repo, cfg, h, "42", false, p)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +183,7 @@ func TestViewDegradesAndFlagsForks(t *testing.T) {
 	x.HeadRepo = "someone/tool"
 	h := &fakeHost{single: x, filesErr: errors.New("files down"), reviewErr: errors.New("reviews down")}
 	out, errOut, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
-		return View(ctx, repo, cfg, h, "#42", p)
+		return View(ctx, repo, cfg, h, "#42", false, p)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -202,7 +202,7 @@ func TestViewDegradesAndFlagsForks(t *testing.T) {
 func TestViewErrors(t *testing.T) {
 	run := func(h *fakeHost, ref string) error {
 		_, _, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
-			return View(ctx, repo, cfg, h, ref, p)
+			return View(ctx, repo, cfg, h, ref, false, p)
 		})
 		return err
 	}
@@ -226,7 +226,7 @@ func TestStatusPrefersOpenAndSameRepository(t *testing.T) {
 	open.Number, open.Title, open.Draft = 31, "Current work", false
 	h := &fakeHost{prs: []provider.PullRequest{fork, merged, open}, review: provider.Review{State: provider.ReviewApproved, Approvals: []string{"dani"}}}
 	out, _, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
-		return Status(ctx, repo, cfg, h, p)
+		return Status(ctx, repo, cfg, h, false, p)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +246,7 @@ func TestStatusPrefersOpenAndSameRepository(t *testing.T) {
 
 func TestStatusWithoutRequestAndDetachedHead(t *testing.T) {
 	out, _, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
-		return Status(ctx, repo, cfg, &fakeHost{}, p)
+		return Status(ctx, repo, cfg, &fakeHost{}, false, p)
 	})
 	if err != nil || !strings.Contains(out, "No pull request for branch feature/login-page") || !strings.Contains(out, "gtide pr") {
 		t.Errorf("no request: err=%v\n%s", err, out)
@@ -255,7 +255,7 @@ func TestStatusWithoutRequestAndDetachedHead(t *testing.T) {
 	repo, dir, _ := setup(t)
 	testutil.Run(t, dir, "checkout", "-q", "--detach")
 	var o, e bytes.Buffer
-	err = Status(context.Background(), repo, domain.Default(), &fakeHost{}, output.Printer{Out: &o, Err: &e})
+	err = Status(context.Background(), repo, domain.Default(), &fakeHost{}, false, output.Printer{Out: &o, Err: &e})
 	if apperr.CodeOf(err) != apperr.CodeUnsafeRepo {
 		t.Errorf("detached: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestColouredOutputKeepsTheText(t *testing.T) {
 	}
 
 	plain, colour = both(func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
-		return View(ctx, repo, cfg, h, "42", p)
+		return View(ctx, repo, cfg, h, "42", false, p)
 	})
 	if ansiRe.ReplaceAllString(colour, "") != plain {
 		t.Errorf("colour changed the view text:\n%q\nvs\n%q", ansiRe.ReplaceAllString(colour, ""), plain)

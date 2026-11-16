@@ -10,6 +10,8 @@ import (
 	"github.com/cellestias/git-tide/internal/apperr"
 	dremote "github.com/cellestias/git-tide/internal/domain/remote"
 	"github.com/cellestias/git-tide/internal/git/repository"
+	"github.com/cellestias/git-tide/internal/github"
+	"github.com/cellestias/git-tide/internal/gitlab"
 	"github.com/cellestias/git-tide/internal/output"
 	"github.com/cellestias/git-tide/internal/provider"
 )
@@ -116,10 +118,13 @@ func SetURL(ctx context.Context, repo *repository.Repository, name, url string, 
 }
 
 // Show lists the remotes with their provider and marks the one Tide uses.
-func Show(ctx context.Context, repo *repository.Repository, configured string, p output.Printer) error {
+func Show(ctx context.Context, repo *repository.Repository, configured string, asJSON bool, p output.Printer) error {
 	lines, err := repo.RemoteLines(ctx)
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot read the remotes", "", err)
+	}
+	if asJSON {
+		return writeJSON(p, lines, configured)
 	}
 	if len(lines) == 0 {
 		p.Info("No remote is configured. Add one with `gtide remote add <url>`.")
@@ -163,4 +168,51 @@ func redact(url string) string {
 		return scheme + "://" + host
 	}
 	return scheme + "://" + host + "/" + path
+}
+
+type jsonRemote struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`      // a password or token in the URL is hidden
+	Provider string `json:"provider"` // "github", "gitlab" or "unknown"
+	Repo     string `json:"repo"`     // "owner/name" on the provider, empty when it cannot be told
+	Used     bool   `json:"used"`     // the remote gtide publishes to (`remote` in .tide.yml)
+}
+
+func writeJSON(p output.Printer, lines [][2]string, configured string) error {
+	doc := struct {
+		Configured      string       `json:"configured"`       // the remote name gtide uses
+		ConfiguredFound bool         `json:"configured_found"` // false: that remote does not exist
+		Remotes         []jsonRemote `json:"remotes"`
+	}{Configured: configured, Remotes: []jsonRemote{}}
+	for _, l := range lines {
+		r := jsonRemote{Name: l[0], URL: redact(l[1]), Provider: provider.DetectName(l[1]), Used: l[0] == configured}
+		if r.Provider == "" {
+			r.Provider = "unknown"
+		}
+		r.Repo = repoOf(r.Provider, r.URL)
+		doc.ConfiguredFound = doc.ConfiguredFound || r.Used
+		doc.Remotes = append(doc.Remotes, r)
+	}
+	if err := p.JSON(doc); err != nil {
+		return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", err)
+	}
+	return nil
+}
+
+// repoOf names the repository a remote URL points at on its provider.
+func repoOf(prov, url string) string {
+	var r provider.Repo
+	var err error
+	switch prov {
+	case provider.GitHub:
+		r, err = github.ParseRemoteURL(url)
+	case provider.GitLab:
+		r, err = gitlab.ParseRemoteURL(url)
+	default:
+		return ""
+	}
+	if err != nil {
+		return ""
+	}
+	return r.String()
 }

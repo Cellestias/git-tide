@@ -1,10 +1,14 @@
 package doctor
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cellestias/git-tide/internal/git/executor"
+	"github.com/cellestias/git-tide/internal/output"
 	"github.com/cellestias/git-tide/internal/testutil"
 )
 
@@ -47,5 +51,131 @@ func TestInvalidConfigFails(t *testing.T) {
 	got := levels(Run(context.Background(), executor.Exec{}, dir))
 	if got["config"] != Fail {
 		t.Fatalf("levels = %v", got)
+	}
+}
+
+func TestEnvFileIsCheckedWhenThereIsOne(t *testing.T) {
+	ctx := context.Background()
+	dir := testutil.NewRepo(t)
+	if _, ok := levels(Run(ctx, executor.Exec{}, dir))[".env"]; ok {
+		t.Fatal("no .env, no check")
+	}
+
+	testutil.WriteFile(t, dir, ".env", "GITHUB_TOKEN=x\n")
+	got := levels(Run(ctx, executor.Exec{}, dir))
+	if got[".env"] != Warn {
+		t.Errorf("a .env Git does not ignore must be a warning: %v", got)
+	}
+
+	testutil.WriteFile(t, dir, ".gitignore", ".env\n")
+	if got := levels(Run(ctx, executor.Exec{}, dir)); got[".env"] != OK {
+		t.Errorf("ignored: %v", got)
+	}
+
+	// tracked is a failure, even when ignored afterwards: the token is already in the history
+	testutil.Run(t, dir, "add", "-f", ".env")
+	testutil.Commit(t, dir, "chore: oops")
+	var tracked Check
+	for _, c := range Run(ctx, executor.Exec{}, dir) {
+		if c.Name == ".env" {
+			tracked = c
+		}
+	}
+	if tracked.Level != Fail || tracked.Hint == "" {
+		t.Errorf("tracked .env = %+v", tracked)
+	}
+}
+
+func TestSecretScanningBeingOffIsAWarning(t *testing.T) {
+	dir := testutil.NewRepo(t)
+	testutil.WriteFile(t, dir, ".tide.yml", "version: 1\nsecrets:\n  enabled: false\n")
+	if got := levels(Run(context.Background(), executor.Exec{}, dir)); got["secret scanning"] != Warn {
+		t.Errorf("levels = %v", got)
+	}
+	testutil.WriteFile(t, dir, ".tide.yml", "version: 1\n")
+	if _, ok := levels(Run(context.Background(), executor.Exec{}, dir))["secret scanning"]; ok {
+		t.Error("on by default: nothing to say")
+	}
+}
+
+func TestCheckJSON(t *testing.T) {
+	var out, errOut bytes.Buffer
+	checks := []Check{
+		{Level: OK, Name: "git", Detail: "git version 2.40"},
+		{Level: Warn, Name: ".env", Detail: "is not in .gitignore", Hint: "add it"},
+		{Level: Fail, Name: "repository", Detail: "no repository"},
+	}
+	if err := WriteJSON(output.Printer{Out: &out, Err: &errOut}, checks); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		OK       bool
+		Warnings int
+		Failures int
+		Checks   []struct{ Level, Name, Detail, Hint string }
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, &out)
+	}
+	if got.OK || got.Warnings != 1 || got.Failures != 1 || len(got.Checks) != 3 || got.Checks[1].Level != "warn" || got.Checks[1].Hint != "add it" || got.Checks[2].Level != "fail" {
+		t.Errorf("got = %+v", got)
+	}
+	out.Reset()
+	_ = WriteJSON(output.Printer{Out: &out, Err: &errOut}, checks[:1])
+	if !strings.Contains(out.String(), `"ok": true`) || !strings.Contains(out.String(), `"hint": ""`) {
+		t.Errorf("a clean run is ok, and a missing hint is an empty string:\n%s", &out)
+	}
+	_ = WriteJSON(output.Printer{Out: &out, Err: &errOut}, nil)
+	if !strings.Contains(out.String(), `"checks": []`) {
+		t.Errorf("no checks is [], never null:\n%s", &out)
+	}
+	if OK.String() != "ok" || Warn.String() != "warn" || Fail.String() != "fail" {
+		t.Error("level names")
+	}
+}
+
+func TestProviderTokenFromDotenvIsNotMissing(t *testing.T) {
+	ctx := context.Background()
+	const name = "TIDE_DOCTOR_TEST_TOKEN"
+	dir := testutil.NewRepo(t)
+	testutil.WriteFile(t, dir, "secret.tide.yml", "provider_token: ${"+name+"}\n")
+	testutil.WriteFile(t, dir, ".gitignore", "secret.tide.yml\n.env\n")
+	token := func() (Level, string) {
+		for _, c := range Run(ctx, executor.Exec{}, dir) {
+			if c.Name == "provider token" {
+				return c.Level, c.Detail
+			}
+		}
+		return -1, ""
+	}
+
+	if level, detail := token(); level != Warn || !strings.Contains(detail, "is not set") {
+		t.Fatalf("no token anywhere: %v %q", level, detail)
+	}
+	testutil.WriteFile(t, dir, ".env", name+"=abc123\n")
+	if level, detail := token(); level != OK || !strings.Contains(detail, "read from .env") {
+		t.Errorf("in .env: %v %q (Tide reads it from there, so it is not missing)", level, detail)
+	}
+	testutil.WriteFile(t, dir, ".env", "OTHER=abc123\n")
+	if level, _ := token(); level != Warn {
+		t.Errorf("another key in .env is not this token: %v", level)
+	}
+	testutil.WriteFile(t, dir, ".env", name+"=\n")
+	if level, _ := token(); level != Warn {
+		t.Errorf("an empty value is not a token: %v", level)
+	}
+
+	// a .env that Git tracks is refused by Tide, so it does not make the token available
+	testutil.WriteFile(t, dir, ".env", name+"=abc123\n")
+	testutil.Run(t, dir, "add", "-f", ".env")
+	testutil.Commit(t, dir, "chore: oops")
+	if level, _ := token(); level != Warn {
+		t.Errorf("a tracked .env is not used: %v", level)
+	}
+
+	// the environment still wins, and then there is nothing to say
+	t.Setenv(name, "from-env")
+	if level, _ := token(); level != -1 {
+		t.Errorf("set in the environment: no check expected, got level %v", level)
 	}
 }

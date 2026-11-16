@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/cellestias/git-tide/internal/config"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/domain/security"
+	"github.com/cellestias/git-tide/internal/dotenv"
 	"github.com/cellestias/git-tide/internal/git/executor"
 	"github.com/cellestias/git-tide/internal/git/hooks"
 	"github.com/cellestias/git-tide/internal/git/repository"
@@ -29,6 +31,17 @@ const (
 	Warn
 	Fail
 )
+
+// String is the name of the level: "ok", "warn" or "fail".
+func (l Level) String() string {
+	switch l {
+	case Warn:
+		return "warn"
+	case Fail:
+		return "fail"
+	}
+	return "ok"
+}
 
 type Check struct {
 	Level  Level
@@ -106,6 +119,10 @@ func Run(ctx context.Context, ex executor.Executor, dir string) []Check {
 
 	checks = append(checks, securityChecks(c, providerName)...)
 	checks = append(checks, secretFileChecks(ctx, repo, ex)...)
+	checks = append(checks, envFileChecks(ctx, repo)...)
+	if !c.Secrets.Enabled {
+		add(Warn, "secret scanning", "is off (secrets.enabled: false): a commit is not checked for secrets", "set `secrets.enabled: true` in .tide.yml")
+	}
 
 	base := c.Branches.DefaultBase
 	local, _ := repo.LocalBranchExists(ctx, base)
@@ -185,7 +202,12 @@ func secretFileChecks(ctx context.Context, repo *repository.Repository, _ execut
 		out = append(out, Check{Level: OK, Name: config.SecretFileName, Detail: "present and git-ignored"})
 	}
 	if v, _ := local.Local.TokenVar(); v != "" && os.Getenv(v) == "" {
-		out = append(out, Check{Level: Warn, Name: "provider token", Detail: "$" + v + " is not set", Hint: "export it, or put it in .env (git-ignored)"})
+		if fromDotenv(ctx, repo, v) {
+			// Tide reads the variable from .env when the environment does not have it: that is a token that works.
+			out = append(out, Check{Level: OK, Name: "provider token", Detail: "$" + v + " is read from .env"})
+		} else {
+			out = append(out, Check{Level: Warn, Name: "provider token", Detail: "$" + v + " is not set", Hint: "export it, or put it in .env (git-ignored)"})
+		}
 	}
 	return out
 }
@@ -204,4 +226,34 @@ func securityChecks(c domain.Config, providerName string) []Check {
 		return []Check{{Level: Warn, Name: "security", Detail: fmt.Sprintf("level %s, but the provider is not known", level), Hint: "set `provider: github` in .tide.yml"}}
 	}
 	return []Check{{Level: Warn, Name: "security", Detail: fmt.Sprintf("level %s, but %s has no security alerts API Tide can read: nothing is checked", level, providerName)}}
+}
+
+// envFileChecks looks at the .env file at the root: the token Tide may read from
+// it is a secret, and a .env that Git does not ignore is one `git add` away from
+// the history.
+func envFileChecks(ctx context.Context, repo *repository.Repository) []Check {
+	info, err := os.Lstat(filepath.Join(repo.Root, ".env"))
+	if err != nil || !info.Mode().IsRegular() {
+		return nil
+	}
+	if tracked, err := repo.IsTracked(ctx, ".env"); err == nil && tracked {
+		return []Check{{Level: Fail, Name: ".env", Detail: "is tracked by Git: anything secret in it is exposed",
+			Hint: "revoke the tokens in it, run `git rm --cached .env`, add .env to .gitignore and commit"}}
+	}
+	if ignored, err := repo.IsIgnored(ctx, ".env"); err == nil && !ignored {
+		return []Check{{Level: Warn, Name: ".env", Detail: "is not in .gitignore: `gtide save` or `git add -A` would commit it",
+			Hint: "add .env to .gitignore"}}
+	}
+	return []Check{{Level: OK, Name: ".env", Detail: "present and git-ignored"}}
+}
+
+// fromDotenv reports whether .env at the root gives name a value that Tide would
+// use: a .env that Git tracks is refused, since the token in it is exposed.
+func fromDotenv(ctx context.Context, repo *repository.Repository, name string) bool {
+	values, err := dotenv.Read(filepath.Join(repo.Root, ".env"), name)
+	if err != nil || values[name] == "" {
+		return false
+	}
+	tracked, err := repo.IsTracked(ctx, ".env")
+	return err == nil && !tracked
 }

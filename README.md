@@ -595,7 +595,22 @@ The name must be a version: `v1.4.0`, `1.4.0`, `v2.0.0-rc.1`. `create` only work
 
 ### `gtide doctor`
 
-Diagnoses the setup without changing anything: Git version, repository, configuration, remote, base branch, each hook, and whether `gtide` is on the `PATH`. Problems are shown with a hint; it exits non-zero only on hard failures (no Git, not a repository, invalid configuration).
+Diagnoses the setup without changing anything: Git version, repository, configuration, remote, base branch, `secret.tide.yml` and `.env`, whether secret scanning is on, the security level, each hook, and whether `gtide` is on the `PATH`. Problems are shown with a hint; it exits non-zero only on hard failures (no Git, not a repository, invalid configuration, a tracked `secret.tide.yml` or `.env`). A `.env` that Git does not ignore is a warning, since `gtide save` or `git add -A` would commit it. `--json` prints every check (`level`: `ok`, `warn` or `fail`, with `detail` and `hint`) on stdout, with the same exit code.
+
+### `gtide secrets scan`
+
+```bash
+gtide secrets scan                  # files that hold a likely secret, now
+gtide secrets scan --history        # ...and the commits that ever added one
+gtide secrets scan --history --limit 1000 --json
+gtide secrets scan --fail           # exit 4 when something is found, for CI
+```
+
+Scans the committed files and the new ones Git does not ignore, with the detectors the commit hook uses: the built-in ones, the custom patterns of `.tide.yml` and the local ones of `secret.tide.yml`. It shows the **file, the line and the rule, never the value**, so its output can be pasted or screenshotted. A line that carries `tide:allow-secret` is left alone.
+
+`--history` also reads what the newest commits (300 by default, `--limit` up to 5000) of every local branch, remote branch and tag added. That finds a key that was committed and removed later, and says whether it is **still in the files** or **only in the history**. A secret that was committed stays exposed even after the file is cleaned: rotate it first. Tide never rewrites history.
+
+Binary files, files over 1 MiB and symlinks are skipped, and with `secrets.enabled: false` nothing is scanned. It exits 0 when it finds something so a script can read the result; `--fail` exits 4 instead.
 
 ### `gtide config`
 
@@ -875,13 +890,17 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 
 ## Machine-readable output
 
-`status`, `diff`, `branch`, `history`, `history show`, `tag` and `stash list` take `--json`: stdout holds only the JSON document, notes and warnings stay on stderr, and an empty result is `[]` or an object, never prose. `history --patch` adds what each commit changed. Fields only get added in minor releases. The shape of each command is in [docs/json.md](docs/json.md).
+Every command that reads something takes `--json` (`status`, `diff`, `branch`, `history`, `history show`, `tag`, `stash list`, `pr list`, `pr view`, `pr status`, `security`, `secrets scan`, `doctor`, `config show`, `config validate`, `remote show`), and so does every command that changes something (`commit`, `save`, `amend`, `undo`, `push`, `pull`, `update`, `create`, `change`, `pr`, `review`, `continue`, `abort`, `tag create`/`push`/`delete`, `branch delete`/`rename`, `stash`/`pop`/`drop`, `remote add`/`set-url`, `init`, `clone`).
+
+The rules are the same for all of them: **stdout holds only the JSON document**, the human log (progress, notes, warnings, the success line) goes to stderr, and an empty result is `[]` or an object, never prose. A command that changes something prints one envelope, `{ "ok", "action", "branch", "head", "details" }`, after it has worked; when it fails it prints **nothing** on stdout, and the exit code and stderr say why. Fields are only added in minor releases. The shape of each command is in [docs/json.md](docs/json.md).
 
 ```bash
 gtide status --json | jq '.files[] | select(.conflict) | .path'
 gtide history -f src/login.go --patch --json
+gtide save -m "feat: add login" -f src/login.go --json | jq -r '.details.commit'
+gtide pr --yes --json | jq -r '.details.url'
+gtide pr list --state open --json | jq '.[] | {number, title, author}'
 ```
-
 ## Security and limits
 
 - **Local guardrails, not enforcement.** Anyone can bypass hooks with `--no-verify` or edit their local setup. Keep branch protection enabled on GitHub; it is the authoritative control.

@@ -37,6 +37,8 @@ type Options struct {
 	// Security is the alerts check before the branch is pushed. It gets the files
 	// the push changes and may stop it. Nil means no check.
 	Security func(ctx context.Context, touched []string) error
+	// Result, when set, receives the request that was created.
+	Result *provider.PullRequest
 }
 
 func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, opts Options, p output.Printer) error {
@@ -142,6 +144,9 @@ func Run(ctx context.Context, repo *repository.Repository, cfg domain.Config, c 
 			"the branch was pushed. The token needs permission to write "+noun+"s: \"Pull requests: Read and write\" for a fine-grained GitHub token (with the organisation as resource owner), the repo scope for a classic one, or the api scope on GitLab. Then re-run `gtide pr`", err)
 	case err != nil:
 		return apperr.Wrap(apperr.CodeExternal, "cannot create "+noun, "the branch was pushed; re-run `gtide pr`", err)
+	}
+	if opts.Result != nil {
+		*opts.Result = created
 	}
 	p.Success("Opened %s: %s", ref(c, created.Number), clean(created.URL))
 	return nil

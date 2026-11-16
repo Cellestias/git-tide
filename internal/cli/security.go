@@ -5,7 +5,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	appcommit "github.com/cellestias/git-tide/internal/app/commit"
 	appsecurity "github.com/cellestias/git-tide/internal/app/security"
 	"github.com/cellestias/git-tide/internal/apperr"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
@@ -42,18 +41,6 @@ func (e *env) securityTarget(repo *repository.Repository, cfg domain.Config) app
 		}
 		return p, hosted, nil
 	}
-}
-
-// commitThenAlerts makes the commit, then, at levels medium and high, lists the
-// open security alerts. The alerts never undo or fail a commit that was made.
-func (e *env) commitThenAlerts(ctx context.Context, repo *repository.Repository, cfg domain.Config, opts appcommit.Options) error {
-	if err := appcommit.Run(ctx, repo, cfg, opts, e.p); err != nil {
-		return err
-	}
-	if cfg.SecurityLevel() != sec.Off {
-		_ = e.securityGate(repo, cfg)(ctx, sec.StageCommit, nil)
-	}
-	return nil
 }
 
 func (e *env) securityCmd() *cobra.Command {

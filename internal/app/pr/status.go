@@ -14,7 +14,7 @@ import (
 
 // Status prints the pull request or merge request of the current branch, if
 // there is one. An open request wins over a closed or merged one.
-func Status(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, p output.Printer) error {
+func Status(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, asJSON bool, p output.Printer) error {
 	noun := c.Noun()
 	hosted, err := hostedRepo(ctx, repo, cfg, c)
 	if err != nil {
@@ -43,6 +43,19 @@ func Status(ctx context.Context, repo *repository.Repository, cfg domain.Config,
 		if x == nil || (x.State != provider.StateOpen && found[i].State == provider.StateOpen) {
 			x = &found[i]
 		}
+	}
+	if asJSON {
+		var review *provider.Review
+		var warnings []string
+		if x != nil {
+			if rv, err := c.Reviews(ctx, hosted, x.Number); err != nil {
+				warnings = append(warnings, "cannot read reviews: "+clean(err.Error()))
+				p.Warn("cannot read reviews: %s", clean(err.Error()))
+			} else {
+				review = &rv
+			}
+		}
+		return writeStatus(p, c, hosted, current, x, review, warnings)
 	}
 	if x == nil {
 		p.Line("No %s for branch %s.", noun, clean(current))

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cellestias/git-tide/internal/domain/branch"
 	"github.com/cellestias/git-tide/internal/git/executor"
@@ -513,4 +514,78 @@ func (r *Repository) ChangedSince(ctx context.Context, base, rev string) ([]stri
 		}
 	}
 	return paths, nil
+}
+
+// ListFiles lists the files of the work tree Git knows about or would add:
+// tracked is what the index holds, untracked what is neither tracked nor
+// ignored. Paths are relative to the repository root, with forward slashes.
+func (r *Repository) ListFiles(ctx context.Context) (tracked, untracked []string, err error) {
+	split := func(out string) []string {
+		var paths []string
+		for _, p := range strings.Split(out, "\x00") {
+			if p != "" {
+				paths = append(paths, p)
+			}
+		}
+		return paths
+	}
+	out, err := r.git(ctx, "-c", "core.quotepath=false", "ls-files", "-z")
+	if err != nil {
+		return nil, nil, err
+	}
+	tracked = split(out)
+	out, err = r.git(ctx, "-c", "core.quotepath=false", "ls-files", "-z", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, nil, err
+	}
+	return tracked, split(out), nil
+}
+
+// CommitAdditions is what one commit added: the lines, with their line numbers
+// in the file as that commit left it.
+type CommitAdditions struct {
+	Hash  string
+	Date  time.Time
+	Lines []AddedLine
+}
+
+// commitMark starts the record of each commit in HistoryAdditions' output. A diff
+// line always starts with a space, + or -, and a hunk header with "@@ -", so this
+// cannot appear inside one.
+const commitMark = "@@TIDE-COMMIT@@"
+
+// HistoryAdditions returns the lines added by the newest limit commits of every
+// local branch, remote-tracking branch and tag, newest first. Merge commits add
+// nothing of their own, binary files give no lines, and a deletion is not an addition.
+func (r *Repository) HistoryAdditions(ctx context.Context, limit int) ([]CommitAdditions, error) {
+	if limit < 1 {
+		return nil, fmt.Errorf("limit must be at least 1")
+	}
+	out, err := r.git(ctx, "-c", "core.quotepath=false", "log", "--branches", "--remotes", "--tags", "-p", "-U0", "--no-color", "--no-ext-diff",
+		"--no-textconv", "--no-renames", "--diff-filter=AM", "--max-count="+strconv.Itoa(limit), "--format="+commitMark+"%H%x00%at", "--")
+	if err != nil {
+		return nil, err
+	}
+	var commits []CommitAdditions
+	for _, block := range strings.Split(out, commitMark) {
+		if strings.TrimSpace(block) == "" {
+			continue
+		}
+		head, diff, _ := strings.Cut(block, "\n")
+		f := strings.SplitN(head, "\x00", 2)
+		if len(f) != 2 {
+			return nil, fmt.Errorf("unexpected log output")
+		}
+		c := CommitAdditions{Hash: f[0]}
+		if ts, err := strconv.ParseInt(strings.TrimSpace(f[1]), 10, 64); err == nil {
+			c.Date = time.Unix(ts, 0)
+		}
+		lines, err := parseAdditions(diff)
+		if err != nil {
+			return nil, err
+		}
+		c.Lines = lines
+		commits = append(commits, c)
+	}
+	return commits, nil
 }

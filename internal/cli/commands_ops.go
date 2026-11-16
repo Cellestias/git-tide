@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"context"
+	"sort"
+
 	"github.com/spf13/cobra"
 
 	"github.com/cellestias/git-tide/internal/app/branches"
@@ -9,6 +12,8 @@ import (
 	"github.com/cellestias/git-tide/internal/app/status"
 	"github.com/cellestias/git-tide/internal/app/tag"
 	"github.com/cellestias/git-tide/internal/app/undo"
+	"github.com/cellestias/git-tide/internal/git/repository"
+	"github.com/cellestias/git-tide/internal/output"
 	"github.com/spf13/pflag"
 )
 
@@ -25,7 +30,8 @@ func yesFlag(f *pflag.FlagSet, yes *bool, usage string) {
 }
 
 func (e *env) pullCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "pull",
 		Short: "Bring the remote copy of the current branch into it",
 		Long: "Fetch the branch the current branch follows (its upstream, else the same name on the configured remote) and integrate it:\n" +
@@ -37,9 +43,16 @@ func (e *env) pullCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return pull.Run(cmd.Context(), repo, cfg, e.p)
+			ctx := cmd.Context()
+			before := e.headNow(ctx, repo)
+			return e.act(ctx, repo, asJSON, "pull", func(p output.Printer) error { return pull.Run(ctx, repo, cfg, p) }, func() any {
+				after := e.headNow(ctx, repo)
+				return map[string]any{"upstream": repo.Upstream(ctx), "strategy": cfg.Update.Strategy, "before": before.Head, "after": after.Head, "changed": before.Head != after.Head}
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
+	return cmd
 }
 
 func (e *env) statusCmd() *cobra.Command {
@@ -95,13 +108,22 @@ func (e *env) stashCmd() *cobra.Command {
 	var (
 		message   string
 		untracked bool
+		pushJSON  bool
 	)
 	run := func(cmd *cobra.Command, _ []string) error {
 		repo, _, err := e.requireConfig(cmd.Context())
 		if err != nil {
 			return err
 		}
-		return stash.Push(cmd.Context(), repo, message, untracked, e.p)
+		ctx := cmd.Context()
+		return e.act(ctx, repo, pushJSON, "stash", func(p output.Printer) error { return stash.Push(ctx, repo, message, untracked, p) }, func() any {
+			list, _ := repo.StashList(ctx)
+			d := map[string]any{"untracked": untracked, "stashes": len(list)}
+			if len(list) > 0 {
+				d["ref"], d["message"] = list[0].Ref, list[0].Message
+			}
+			return d
+		})
 	}
 	cmd := &cobra.Command{
 		Use:   "stash [push|list|pop|drop]",
@@ -115,10 +137,12 @@ func (e *env) stashCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&message, "message", "m", "", "a note to find the stash by")
 	cmd.Flags().BoolVarP(&untracked, "untracked", "u", false, "also stash untracked files")
+	cmd.Flags().BoolVar(&pushJSON, "json", false, "print the stash made as JSON on stdout (the log goes to stderr)")
 
 	push := &cobra.Command{Use: "push", Short: "Stash the local changes (same as `gtide stash`)", Args: cobra.NoArgs, RunE: run}
 	push.Flags().StringVarP(&message, "message", "m", "", "a note to find the stash by")
 	push.Flags().BoolVarP(&untracked, "untracked", "u", false, "also stash untracked files")
+	push.Flags().BoolVar(&pushJSON, "json", false, "print the stash made as JSON on stdout (the log goes to stderr)")
 	var listJSON bool
 	list := &cobra.Command{
 		Use: "list", Short: "List the stashes", Args: cobra.NoArgs,
@@ -131,6 +155,7 @@ func (e *env) stashCmd() *cobra.Command {
 		},
 	}
 	list.Flags().BoolVar(&listJSON, "json", false, "print JSON on stdout")
+	var popJSON, dropJSON bool
 	pop := &cobra.Command{
 		Use: "pop [stash]", Short: "Apply a stash and remove it", Args: maxArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -142,9 +167,14 @@ func (e *env) stashCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return stash.Pop(cmd.Context(), repo, ref, e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, popJSON, "stash pop", func(p output.Printer) error { return stash.Pop(ctx, repo, ref, p) }, func() any {
+				list, _ := repo.StashList(ctx)
+				return map[string]any{"ref": ref, "stashes": len(list)}
+			})
 		},
 	}
+	pop.Flags().BoolVar(&popJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	var yes bool
 	drop := &cobra.Command{
 		Use: "drop [stash]", Short: "Delete a stash for good", Args: maxArgs(1),
@@ -157,9 +187,14 @@ func (e *env) stashCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return stash.Drop(cmd.Context(), repo, ref, e.confirmUnless(yes), e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, dropJSON, "stash drop", func(p output.Printer) error { return stash.Drop(ctx, repo, ref, e.confirmUnless(yes), p) }, func() any {
+				list, _ := repo.StashList(ctx)
+				return map[string]any{"ref": ref, "stashes": len(list)}
+			})
 		},
 	}
+	drop.Flags().BoolVar(&dropJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	yesFlag(drop.Flags(), &yes, "do not ask for confirmation")
 	cmd.AddCommand(push, list, pop, drop)
 	return cmd
@@ -198,8 +233,9 @@ func (e *env) tagCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the list as JSON on stdout")
 
 	var (
-		copts tag.CreateOptions
-		yes   bool
+		copts      tag.CreateOptions
+		yes        bool
+		createJSON bool
 	)
 	create := &cobra.Command{
 		Use: "create <version>", Short: "Tag the current commit", Args: exactArgs(1),
@@ -209,15 +245,19 @@ func (e *env) tagCmd() *cobra.Command {
 				return err
 			}
 			copts.Confirm = e.confirmUnless(yes)
-			return tag.Create(cmd.Context(), repo, cfg, args[0], copts, e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, createJSON, "tag create", func(p output.Printer) error { return tag.Create(ctx, repo, cfg, args[0], copts, p) }, func() any {
+				return map[string]any{"name": args[0], "commit": tagCommit(ctx, repo, args[0]), "message": firstNonEmpty(copts.Message, args[0]), "pushed": copts.Push}
+			})
 		},
 	}
+	create.Flags().BoolVar(&createJSON, "json", false, "print the tag made as JSON on stdout (the log goes to stderr)")
 	create.Flags().StringVarP(&copts.Message, "message", "m", "", "the tag message (default: the tag name)")
 	create.Flags().BoolVar(&copts.Push, "push", false, "publish the tag to the remote after creating it")
 	create.Flags().BoolVar(&copts.AnyBranch, "any-branch", false, "allow a branch that is not protected")
 	yesFlag(create.Flags(), &yes, "do not ask before publishing")
 
-	var pushYes bool
+	var pushYes, pushTagJSON bool
 	push := &cobra.Command{
 		Use: "push <version>", Short: "Publish an existing tag", Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -225,14 +265,19 @@ func (e *env) tagCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return tag.Push(cmd.Context(), repo, cfg, args[0], e.confirmUnless(pushYes), e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, pushTagJSON, "tag push", func(p output.Printer) error { return tag.Push(ctx, repo, cfg, args[0], e.confirmUnless(pushYes), p) }, func() any {
+				return map[string]any{"name": args[0], "commit": tagCommit(ctx, repo, args[0]), "remote": cfg.Remote}
+			})
 		},
 	}
+	push.Flags().BoolVar(&pushTagJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	yesFlag(push.Flags(), &pushYes, "do not ask for confirmation")
 
 	var (
-		remote bool
-		delYes bool
+		remote  bool
+		delYes  bool
+		delJSON bool
 	)
 	del := &cobra.Command{
 		Use: "delete <version>", Short: "Delete a tag locally, and with --remote on the remote", Args: exactArgs(1),
@@ -241,9 +286,15 @@ func (e *env) tagCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return tag.Delete(cmd.Context(), repo, cfg, args[0], remote, e.confirmUnless(delYes), e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, delJSON, "tag delete", func(p output.Printer) error {
+				return tag.Delete(ctx, repo, cfg, args[0], remote, e.confirmUnless(delYes), p)
+			}, func() any {
+				return map[string]any{"name": args[0], "remote": remote}
+			})
 		},
 	}
+	del.Flags().BoolVar(&delJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	del.Flags().BoolVar(&remote, "remote", false, "also delete the tag on the remote")
 	yesFlag(del.Flags(), &delYes, "do not ask for confirmation")
 
@@ -252,7 +303,8 @@ func (e *env) tagCmd() *cobra.Command {
 }
 
 func (e *env) undoCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "undo",
 		Short: "Take back the last commit and keep its changes staged",
 		Long: "Move the branch to the parent of the last commit and keep that commit's changes staged, so nothing is lost and `gtide save`\n" +
@@ -263,13 +315,22 @@ func (e *env) undoCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return undo.Undo(cmd.Context(), repo, e.p)
+			ctx := cmd.Context()
+			undone, _ := repo.Head(ctx)
+			subject, _ := repo.LastSubject(ctx, "HEAD")
+			return e.act(ctx, repo, asJSON, "undo", func(p output.Printer) error { return undo.Undo(ctx, repo, p) }, func() any {
+				staged, _ := repo.ChangeStat(ctx, true, "")
+				return map[string]any{"undone": map[string]string{"commit": undone, "subject": subject}, "staged": toChanges(staged)}
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
+	return cmd
 }
 
 func (e *env) amendCmd() *cobra.Command {
 	var opts undo.AmendOptions
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "amend",
 		Short: "Fold staged changes into the last commit, and optionally reword it",
@@ -283,9 +344,14 @@ func (e *env) amendCmd() *cobra.Command {
 				return err
 			}
 			opts.Cwd = e.dir
-			return undo.Amend(cmd.Context(), repo, cfg, opts, e.p)
+			ctx := cmd.Context()
+			previous, _ := repo.Head(ctx)
+			return e.act(ctx, repo, asJSON, "amend", func(p output.Printer) error { return undo.Amend(ctx, repo, cfg, opts, p) }, func() any {
+				return commitDetails(ctx, repo, map[string]any{"previous": previous})
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the new commit as JSON on stdout (the log goes to stderr)")
 	f := cmd.Flags()
 	f.StringVarP(&opts.Message, "message", "m", "", "new commit message (the subject line)")
 	f.StringVar(&opts.Body, "body", "", "new commit body")
@@ -298,8 +364,9 @@ func (e *env) amendCmd() *cobra.Command {
 // branchManageCmds are the subcommands of `gtide branch`.
 func (e *env) branchManageCmds() []*cobra.Command {
 	var (
-		dopts branches.DeleteOptions
-		yes   bool
+		dopts   branches.DeleteOptions
+		yes     bool
+		delJSON bool
 	)
 	del := &cobra.Command{
 		Use:     "delete [branch...]",
@@ -315,14 +382,28 @@ func (e *env) branchManageCmds() []*cobra.Command {
 				return err
 			}
 			dopts.Confirm = e.confirmUnless(yes)
-			return branches.Delete(cmd.Context(), repo, cfg, args, dopts, e.p)
+			ctx := cmd.Context()
+			before := localBranches(ctx, repo)
+			return e.act(ctx, repo, delJSON, "branch delete", func(p output.Printer) error { return branches.Delete(ctx, repo, cfg, args, dopts, p) }, func() any {
+				after := localBranches(ctx, repo)
+				deleted := []string{}
+				for name := range before {
+					if !after[name] {
+						deleted = append(deleted, name)
+					}
+				}
+				sort.Strings(deleted)
+				return map[string]any{"deleted": deleted, "remote": dopts.Remote, "forced": dopts.Force}
+			})
 		},
 	}
+	del.Flags().BoolVar(&delJSON, "json", false, "print the branches deleted as JSON on stdout (the log goes to stderr)")
 	del.Flags().BoolVar(&dopts.Merged, "merged", false, "also delete every branch already merged into its base")
 	del.Flags().BoolVar(&dopts.Remote, "remote", false, "also delete the branch on the remote")
 	del.Flags().BoolVar(&dopts.Force, "force", false, "delete branches that are not merged: their commits are lost")
 	yesFlag(del.Flags(), &yes, "do not ask for confirmation")
 
+	var renameJSON bool
 	rename := &cobra.Command{
 		Use:   "rename <old> <new>",
 		Short: "Rename a local branch",
@@ -332,8 +413,26 @@ func (e *env) branchManageCmds() []*cobra.Command {
 			if err != nil {
 				return err
 			}
-			return branches.Rename(cmd.Context(), repo, cfg, args[0], args[1], e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, renameJSON, "branch rename", func(p output.Printer) error { return branches.Rename(ctx, repo, cfg, args[0], args[1], p) }, func() any {
+				return map[string]any{"old": args[0], "new": args[1]}
+			})
 		},
 	}
+	rename.Flags().BoolVar(&renameJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	return []*cobra.Command{del, rename}
+}
+
+// tagCommit is the commit a tag points at, or "" when it cannot be told.
+func tagCommit(ctx context.Context, repo *repository.Repository, name string) string {
+	tags, err := repo.Tags(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, t := range tags {
+		if t.Name == name {
+			return t.Commit
+		}
+	}
+	return ""
 }
