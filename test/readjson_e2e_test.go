@@ -190,3 +190,28 @@ func stdoutWith(t *testing.T, dir string, extra []string, args ...string) (strin
 	}
 	return out.String(), code
 }
+
+func TestReviewPrintsTheBranchAsJSON(t *testing.T) {
+	srv := fakeGitHubPRs(t)
+	env := []string{"TIDE_GITHUB_API_URL=" + srv.URL, "GITHUB_TOKEN=test-token", "GH_TOKEN="}
+	dir, bare := testutil.NewRepoWithRemote(t)
+	testutil.Run(t, dir, "remote", "set-url", "origin", "https://github.com/acme/tool.git")
+	testutil.Run(t, dir, "config", "url."+bare+".insteadOf", "https://github.com/acme/tool.git")
+	if out, code := gtide(t, dir, "init", "--no-hooks"); code != 0 {
+		t.Fatalf("init: %d\n%s", code, out)
+	}
+	git(t, dir, "checkout", "-q", "-b", "feature/login")
+	testutil.WriteFile(t, dir, "a.go", "package a\n")
+	git(t, dir, "add", "a.go")
+	git(t, dir, "commit", "-q", "-m", "feat: login")
+	git(t, dir, "push", "-q", "origin", "HEAD:refs/pull/42/head") // what GitHub keeps for a pull request
+	git(t, dir, "checkout", "-q", "main")
+
+	r := act(t, dir, env, "review", "review", "42")
+	if r.Branch != "tide/review/pr-42" || r.Details["branch"] != "tide/review/pr-42" || r.Details["request"] != "42" || r.Details["reset"] != false {
+		t.Errorf("review = %+v", r)
+	}
+	if r.Head != testutil.Run(t, bare, "rev-parse", "refs/pull/42/head") {
+		t.Errorf("the review branch is on the request's head: %s", r.Head)
+	}
+}
