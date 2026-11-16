@@ -1,11 +1,11 @@
 # Machine-readable output (`--json`)
 
-Read-only commands can print JSON for programs: the VS Code extension, scripts, AI agents. This page is the contract.
+Every command that reads something, and every command that changes something, can print JSON for programs: the VS Code extension, scripts, AI agents. This page is the contract.
 
 ## Rules
 
-- **stdout is only the JSON document.** Progress, notes and warnings go to stderr, so `gtide status --json | jq` works.
-- **Failure is the exit code**, not a JSON error object. The message and the `hint:` line are on stderr. Exit codes are listed in the [README](../README.md#exit-codes).
+- **stdout is only the JSON document.** Progress, notes and warnings go to stderr, so `gtide status --json | jq` works. For a command that changes something the whole human log (the progress lines and the success line) goes to stderr too.
+- **Failure is the exit code**, not a JSON error object, and **stdout is then empty**: nothing half-written can be parsed. The message and the `hint:` line are on stderr. Exit codes are listed in the [README](../README.md#exit-codes). (Two exceptions print the document and still exit non-zero, because the document is the answer: `doctor --json` exits 1 when a check fails, and `config validate --json` exits 3 when the file is not valid.)
 - **An empty result is valid JSON**: `[]` for lists, an object with empty arrays otherwise. Never a sentence.
 - **Lists are arrays, never `null`.** A missing relation (no upstream, no base) is `null`.
 - **Changes are additive.** New fields can appear in a minor release; existing fields keep their name, type and meaning until a major release. Ignore fields you do not know.
@@ -28,6 +28,14 @@ Read-only commands can print JSON for programs: the VS Code extension, scripts, 
 | `gtide security --json` | object |
 | `gtide secrets scan --json [--history]` | object |
 | `gtide doctor --json` | object |
+| `gtide pr list --json [--state] [--author] [--assignee] [--limit]` | array |
+| `gtide pr view <id> --json` | object |
+| `gtide pr status --json` | object |
+| `gtide config show --json` (or `gtide config --json`) | object |
+| `gtide config validate --json` | object |
+| `gtide remote show --json` (or `gtide remote --json`) | object |
+
+And, for the commands that change something, `--json` on: `commit`, `save`, `amend`, `undo`, `push`, `pull`, `update`, `create`, `change`, `pr` (opening a request), `review`, `continue`, `abort`, `tag create`, `tag push`, `tag delete`, `branch delete`, `branch rename`, `stash`, `stash pop`, `stash drop`, `remote add`, `remote set-url`, `init` and `clone`. They share one envelope, described under [Actions](#actions).
 
 ### status
 
@@ -220,6 +228,89 @@ With `--graph` (which needs `--json`) each commit also carries its topology, for
 - `level` is `ok`, `warn` or `fail`; `ok` at the top is true when no check failed. The exit code is 1 when one did, as in the text form, **and the document is still printed**: read stdout whatever the exit code.
 - The check names are stable: `git`, `repository`, `config`, `remote`, `provider`, `secret.tide.yml`, `provider token`, `.env`, `secret scanning`, `security`, `base branch`, the hooks (`hook pre-commit`...), and `gtide on PATH`. Which ones are present depends on the repository.
 
+### pr list, pr view, pr status
+
+A request (a pull request on GitHub, a merge request on GitLab) is the same object in all three:
+
+```json
+{
+  "number": 42,
+  "title": "Add authentication",
+  "state": "open",
+  "draft": false,
+  "url": "https://github.com/acme/tool/pull/42",
+  "author": "ana",
+  "assignees": ["bia"],
+  "requested_reviewers": ["caio"],
+  "head": "feature/login",
+  "base": "main",
+  "head_repo": "acme/tool",
+  "created_at": "2026-11-01T10:00:00Z",
+  "updated_at": "2026-11-02T11:30:00Z"
+}
+```
+
+- `state` is `open`, `closed` or `merged`. `requested_reviewers` are the reviews still asked for. `head_repo` is empty when unknown or deleted.
+- `pr list --json` is an array of these, newest first. A list cut at the provider's cap says so on stderr.
+- `pr status --json` is `{ "provider", "noun", "repo", "branch", "request", "review", "warnings" }`: `request` is the request of the current branch, or `null`; `review` is `null` when there is no request or the reviews could not be read, and then `warnings` says why.
+- `pr view <id> --json` is the request plus `provider`, `noun`, `repo`, `fork` (the source is another repository), `body` (the description, cut at 20 000 characters, with `body_truncated`), `review`, `files` (`path`, `old_path`, `status`, `additions`, `deletions`, `has_stats`), `commits` (`sha`, `subject`, oldest first), `files_truncated`, `commits_truncated` and `warnings`. What could not be read is `null` (the review) or `[]` (a list), and a warning names it.
+- `review` is `{ "state": "pending" | "approved" | "changes_requested", "approvals": [], "changes_requested": [] }`.
+
+### config show, config validate, remote show
+
+`config show --json` is `{ "found", "path", "secret_file_found", "local_patterns", "config": { ... } }`: the effective configuration, the file merged over the defaults, with the same keys as `.tide.yml` (`version`, `provider`, `remote`, `branches`, `update`, `commits`, `secrets`, `security`, `hooks`). The patterns of `secret.tide.yml` are local and never appear: only how many there are, in `local_patterns`. `found` is false when `.tide.yml` does not exist and the values are the defaults.
+
+`config validate --json` is `{ "valid": bool, "path": "...", "errors": [] }`, with one string per problem, each starting with the field (`update.strategy: must be "merge" or "rebase", got "squash"`). The exit code is 3 when it is not valid, and the document is printed all the same.
+
+`remote show --json` is `{ "configured": "origin", "configured_found": bool, "remotes": [ { "name", "url", "provider", "repo", "used" } ] }`. `provider` is `github`, `gitlab` or `unknown`; `repo` is `owner/name` on that provider, or empty; `used` marks the remote gtide publishes to (`remote` in `.tide.yml`). A password in a URL is hidden (`https://***@host/...`).
+
+## Actions
+
+A command that changes something prints, with `--json`, **one object with the same envelope**, after it has worked:
+
+```json
+{
+  "ok": true,
+  "action": "commit",
+  "branch": "feature/x",
+  "head": "1a2b3c4d5e6f...",
+  "details": { "commit": "1a2b3c4d5e6f...", "subject": "feat: add login", "files": [ { "path": "a.go", "added": 10, "deleted": 0, "binary": false } ] }
+}
+```
+
+- `ok` is always `true`: a failure prints nothing on stdout (see the rules above). Check the exit code first.
+- `action` names the command: `commit`, `save`, `amend`, `undo`, `push`, `pull`, `update`, `create`, `change`, `pr`, `review`, `continue`, `abort`, `tag create`, `tag push`, `tag delete`, `branch delete`, `branch rename`, `stash`, `stash pop`, `stash drop`, `remote add`, `remote set-url`, `init`, `clone`.
+- `branch` and `head` are the branch checked out and the full hash of HEAD **after** the action (`branch` is `""` when HEAD is detached, `head` is `""` in a repository with no commit).
+- `details` is read from the repository after the action, so it says what is true now. It is always an object. What it holds, per action:
+
+| Action | `details` |
+|---|---|
+| `commit`, `save` | `commit` (full hash), `subject`, `files` (`path`, `added`, `deleted`, `binary`) |
+| `amend` | as `commit`, plus `previous`: the hash it replaced |
+| `undo` | `undone`: `{ commit, subject }` of the commit taken back, `staged`: its files, now staged |
+| `push` | `remote`, `upstream` (`origin/feature/x`), `forced` |
+| `pull` | `upstream`, `strategy`, `before`, `after`, `changed` |
+| `update` | `base`, `strategy`, `before`, `after`, `changed` |
+| `create` | `branch`, `from`, `switched`, `pushed`, `tracking_remote` |
+| `change` | `branch`, `previous`, `changed` |
+| `pr` | `provider`, `noun`, `number`, `url`, `title`, `draft`, `head`, `base` |
+| `review` | `branch` (`tide/review/pr-42`), `request`, `reset` |
+| `continue` | `operation` (`merge`, `rebase`...), `in_progress` (a rebase can stop again on the next commit) |
+| `abort` | `operation` |
+| `tag create` | `name`, `commit`, `message`, `pushed` |
+| `tag push` | `name`, `commit`, `remote` |
+| `tag delete` | `name`, `remote` (also deleted there) |
+| `branch delete` | `deleted` (the local branches that are really gone), `remote`, `forced` |
+| `branch rename` | `old`, `new` |
+| `stash` | `ref` (`stash@{0}`), `message`, `untracked`, `stashes` (how many there are now) |
+| `stash pop`, `stash drop` | `ref`, `stashes` (how many are left) |
+| `remote add`, `remote set-url` | `name`, `url` (a password is hidden), `provider` |
+| `init` | `config` and `secret_file` (`path`, `created`), `gitignore` (`created`, `updated`), `provider`, `base`, `hook_changes`, `hooks_skipped`, `notes`, `remote` (`name`, `url`, `added`, or `null`) |
+| `clone` | `path`, `url`, `branch`, `head`, `setup` (the same as `init`) |
+
+- A prompt (`--force`, `tag push`, `branch delete`) is still asked on stderr unless `--yes` is given: a program should pass `--yes` for the ones it has the right to confirm, and nothing else.
+- `--json` on `diff --patch`, `history show`, `review --diff` and the like prints its patch to stderr when the command is an action, because stdout is the document.
+
 ## Checking the version
 
-`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `gtide security` needs **v1.8.0 or later**; `gtide secrets scan` and `gtide doctor --json` need **v1.9.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
+`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `gtide security` needs **v1.8.0 or later**; `gtide secrets scan` and `gtide doctor --json` need **v1.9.0 or later**; `--json` on `pr list`, `pr view`, `pr status`, `config`, `remote show` and on every command that changes something needs **v1.10.0 or later**; `history --json` and `history show --json` exist since v1.4.0.

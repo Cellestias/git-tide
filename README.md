@@ -890,13 +890,17 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 
 ## Machine-readable output
 
-`status`, `diff`, `branch`, `history`, `history show`, `tag` and `stash list` take `--json`: stdout holds only the JSON document, notes and warnings stay on stderr, and an empty result is `[]` or an object, never prose. `history --patch` adds what each commit changed. Fields only get added in minor releases. The shape of each command is in [docs/json.md](docs/json.md).
+Every command that reads something takes `--json` (`status`, `diff`, `branch`, `history`, `history show`, `tag`, `stash list`, `pr list`, `pr view`, `pr status`, `security`, `secrets scan`, `doctor`, `config show`, `config validate`, `remote show`), and so does every command that changes something (`commit`, `save`, `amend`, `undo`, `push`, `pull`, `update`, `create`, `change`, `pr`, `review`, `continue`, `abort`, `tag create`/`push`/`delete`, `branch delete`/`rename`, `stash`/`pop`/`drop`, `remote add`/`set-url`, `init`, `clone`).
+
+The rules are the same for all of them: **stdout holds only the JSON document**, the human log (progress, notes, warnings, the success line) goes to stderr, and an empty result is `[]` or an object, never prose. A command that changes something prints one envelope, `{ "ok", "action", "branch", "head", "details" }`, after it has worked; when it fails it prints **nothing** on stdout, and the exit code and stderr say why. Fields are only added in minor releases. The shape of each command is in [docs/json.md](docs/json.md).
 
 ```bash
 gtide status --json | jq '.files[] | select(.conflict) | .path'
 gtide history -f src/login.go --patch --json
+gtide save -m "feat: add login" -f src/login.go --json | jq -r '.details.commit'
+gtide pr --yes --json | jq -r '.details.url'
+gtide pr list --state open --json | jq '.[] | {number, title, author}'
 ```
-
 ## Security and limits
 
 - **Local guardrails, not enforcement.** Anyone can bypass hooks with `--no-verify` or edit their local setup. Keep branch protection enabled on GitHub; it is the authoritative control.
