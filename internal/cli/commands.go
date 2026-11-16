@@ -178,6 +178,7 @@ func (e *env) cloneCmd() *cobra.Command {
 
 func (e *env) remoteCmd() *cobra.Command {
 	name := ""
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "remote [add|set-url|show]",
 		Short: "Add, change or show the remote",
@@ -187,9 +188,10 @@ func (e *env) remoteCmd() *cobra.Command {
 		Example: "  gtide remote add git@github.com:me/app.git\n  gtide remote set-url https://github.com/me/app.git\n  gtide remote",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return e.remoteShow(cmd.Context())
+			return e.remoteShow(cmd.Context(), asJSON)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the remotes as JSON on stdout")
 	cmd.PersistentFlags().StringVar(&name, "name", "", "remote name (default: `remote` from "+config.FileName+", else origin)")
 	add := &cobra.Command{
 		Use:   "add <url>",
@@ -215,14 +217,16 @@ func (e *env) remoteCmd() *cobra.Command {
 			return remoteapp.SetURL(cmd.Context(), repo, n, args[0], e.p)
 		},
 	}
+	var showJSON bool
 	show := &cobra.Command{
 		Use:   "show",
 		Short: "List the remotes and their provider",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return e.remoteShow(cmd.Context())
+			return e.remoteShow(cmd.Context(), showJSON)
 		},
 	}
+	show.Flags().BoolVar(&showJSON, "json", false, "print the remotes as JSON on stdout")
 	cmd.AddCommand(add, set, show)
 	return cmd
 }
@@ -247,12 +251,12 @@ func (e *env) remoteTarget(ctx context.Context, name string) (*repository.Reposi
 	return repo, remoteapp.DefaultName, nil
 }
 
-func (e *env) remoteShow(ctx context.Context) error {
+func (e *env) remoteShow(ctx context.Context, asJSON bool) error {
 	repo, name, err := e.remoteTarget(ctx, "")
 	if err != nil {
 		return err
 	}
-	return remoteapp.Show(ctx, repo, name, e.p)
+	return remoteapp.Show(ctx, repo, name, asJSON, e.p)
 }
 
 func (e *env) updateCmd() *cobra.Command {
@@ -745,11 +749,13 @@ func (e *env) prListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Author, "author", "", "only requests by this login (`me` for yourself)")
 	cmd.Flags().StringVar(&opts.Assignee, "assignee", "", "only requests assigned to this login (`me` for yourself)")
 	cmd.Flags().IntVar(&opts.Limit, "limit", pr.DefaultListLimit, fmt.Sprintf("maximum number of requests (1-%d)", pr.MaxListLimit))
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "print the requests as a JSON array on stdout")
 	return cmd
 }
 
 func (e *env) prViewCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "view <id>",
 		Short: "Show the details of a Pull Request / Merge Request",
 		Long: "Show a request: title, description, author, assignees, state, branches, dates, review status, changed files,\n" +
@@ -765,13 +771,16 @@ func (e *env) prViewCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return pr.View(cmd.Context(), repo, cfg, client, args[0], e.p)
+			return pr.View(cmd.Context(), repo, cfg, client, args[0], asJSON, e.p)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the request, its review, files and commits as JSON on stdout")
+	return cmd
 }
 
 func (e *env) prStatusCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show the Pull Request / Merge Request of the current branch",
 		Long: "Show the request opened from the current branch, if any: title, state, review status, branches, outstanding\n" +
@@ -786,9 +795,11 @@ func (e *env) prStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return pr.Status(cmd.Context(), repo, cfg, client, e.p)
+			return pr.Status(cmd.Context(), repo, cfg, client, asJSON, e.p)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the request of the branch (or null) as JSON on stdout")
+	return cmd
 }
 
 func (e *env) doctorCmd() *cobra.Command {
@@ -838,41 +849,56 @@ func (e *env) doctorCmd() *cobra.Command {
 }
 
 func (e *env) configCmd() *cobra.Command {
+	var showJSON, validateJSON bool
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Inspect or validate Tide configuration",
 		Args:  maxArgs(0),
-		RunE:  func(cmd *cobra.Command, _ []string) error { return e.configShow(cmd) },
+		RunE:  func(cmd *cobra.Command, _ []string) error { return e.configShow(cmd, showJSON) },
 	}
-	cmd.AddCommand(&cobra.Command{
+	cmd.Flags().BoolVar(&showJSON, "json", false, "print the effective configuration as JSON on stdout")
+	show := &cobra.Command{
 		Use:   "show",
 		Short: "Print the effective configuration (file merged over defaults)",
 		Args:  maxArgs(0),
-		RunE:  func(cmd *cobra.Command, _ []string) error { return e.configShow(cmd) },
-	}, &cobra.Command{
+		RunE:  func(cmd *cobra.Command, _ []string) error { return e.configShow(cmd, showJSON) },
+	}
+	show.Flags().BoolVar(&showJSON, "json", false, "print the effective configuration as JSON on stdout")
+	validate := &cobra.Command{
 		Use:   "validate",
 		Short: "Validate " + config.FileName,
-		Args:  maxArgs(0),
+		Long: "Check " + config.FileName + " and secret.tide.yml: they must parse, have no unknown key and pass every rule. Exit code 3 when they do not.\n" +
+			"--json prints {valid, path, errors} on stdout, with the same exit code.",
+		Args: maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			repo, err := e.openRepo(cmd.Context())
 			if err != nil {
 				return err
 			}
 			res, err := config.Load(repo.Root)
+			if validateJSON {
+				if jerr := e.p.JSON(config.Validate(res, err)); jerr != nil {
+					return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", jerr)
+				}
+			}
 			if err != nil {
 				return err
 			}
 			if !res.Found {
 				return apperr.New(apperr.CodeConfig, config.FileName+" not found", "run `gtide init` first")
 			}
-			e.p.Success("%s is valid", res.Path)
+			if !validateJSON {
+				e.p.Success("%s is valid", res.Path)
+			}
 			return nil
 		},
-	})
+	}
+	validate.Flags().BoolVar(&validateJSON, "json", false, "print the result as JSON on stdout")
+	cmd.AddCommand(show, validate)
 	return cmd
 }
 
-func (e *env) configShow(cmd *cobra.Command) error {
+func (e *env) configShow(cmd *cobra.Command, asJSON bool) error {
 	repo, err := e.openRepo(cmd.Context())
 	if err != nil {
 		return err
@@ -880,6 +906,12 @@ func (e *env) configShow(cmd *cobra.Command) error {
 	res, err := config.Load(repo.Root)
 	if err != nil {
 		return err
+	}
+	if asJSON {
+		if err := e.p.JSON(config.View(res)); err != nil {
+			return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", err)
+		}
+		return nil
 	}
 	out, err := config.Marshal(res.Config)
 	if err != nil {

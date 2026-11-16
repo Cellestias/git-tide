@@ -23,6 +23,7 @@ type ListOptions struct {
 	Author   string // login, or "me"
 	Assignee string // login, or "me"
 	Limit    int    // 0 means DefaultListLimit
+	JSON     bool   // print the requests as a JSON array on stdout
 }
 
 // List prints the repository's pull requests or merge requests as a table.
@@ -61,6 +62,9 @@ func List(ctx context.Context, repo *repository.Repository, cfg domain.Config, c
 	}
 	if truncated {
 		p.Warn("%s list truncated; narrow it with --state, --author or --assignee", c.Noun())
+	}
+	if opts.JSON {
+		return writeList(p, prs)
 	}
 	if len(prs) == 0 {
 		p.Note("No %ss match.", c.Noun())

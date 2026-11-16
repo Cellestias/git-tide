@@ -21,7 +21,7 @@ const (
 
 // View prints the details of one pull request or merge request. ref is a
 // number, "#number" ("!number" on GitLab), or a request URL.
-func View(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, refText string, p output.Printer) error {
+func View(ctx context.Context, repo *repository.Repository, cfg domain.Config, c provider.Provider, refText string, asJSON bool, p output.Printer) error {
 	r, err := c.ParseRef(refText)
 	if err != nil {
 		return apperr.Usage("%v", err)
@@ -51,6 +51,29 @@ func View(ctx context.Context, repo *repository.Repository, cfg domain.Config, c
 	commits, ctrunc, cerr := c.Commits(ctx, hosted, r.Number)
 	if cerr != nil {
 		p.Warn("cannot read commits: %s", clean(cerr.Error()))
+	}
+
+	if asJSON {
+		var rv *provider.Review
+		if rerr == nil {
+			rv = &review
+		}
+		var warnings []string
+		for _, w := range []struct {
+			err  error
+			what string
+		}{{rerr, "reviews"}, {ferr, "changed files"}, {cerr, "commits"}} {
+			if w.err != nil {
+				warnings = append(warnings, "cannot read "+w.what+": "+clean(w.err.Error()))
+			}
+		}
+		if ferr != nil {
+			files = nil
+		}
+		if cerr != nil {
+			commits = nil
+		}
+		return writeView(p, c, hosted, x, rv, files, ftrunc, commits, ctrunc, warnings)
 	}
 
 	p.Line("%s %s", p.Bold(ref(c, x.Number)), p.Bold(clean(x.Title)))
