@@ -28,13 +28,15 @@ import (
 	"github.com/cellestias/git-tide/internal/config"
 	"github.com/cellestias/git-tide/internal/git/executor"
 	"github.com/cellestias/git-tide/internal/git/repository"
+	"github.com/cellestias/git-tide/internal/output"
 	"github.com/cellestias/git-tide/internal/provider"
 )
 
 func (e *env) initCmd() *cobra.Command {
 	var (
-		opts initrepo.Options
-		yes  bool
+		opts   initrepo.Options
+		yes    bool
+		asJSON bool
 	)
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -53,17 +55,23 @@ func (e *env) initCmd() *cobra.Command {
 			repo, err := repository.Open(cmd.Context(), e.ex, e.dir)
 			switch {
 			case errors.Is(err, repository.ErrNotRepository):
-				if repo, err = e.createRepo(cmd.Context(), opts.Base, yes); err != nil {
+				if repo, err = e.createRepo(cmd.Context(), opts.Base, yes, e.quiet(asJSON)); err != nil {
 					return err
 				}
 			case err != nil:
 				return apperr.Wrap(apperr.CodeExternal, "cannot run git", "make sure Git is installed and on PATH", err)
 			}
-			res, err := initrepo.Run(cmd.Context(), repo, opts)
-			e.reportInit(res)
-			return err
+			ctx := cmd.Context()
+			var res initrepo.Result
+			return e.act(ctx, repo, asJSON, "init", func(p output.Printer) error {
+				var err error
+				res, err = initrepo.Run(ctx, repo, opts)
+				e.reportInit(p, res)
+				return err
+			}, func() any { return initDetails(res) })
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print what was set up as JSON on stdout (the log goes to stderr)")
 	cmd.Flags().StringVar(&opts.Base, "base", "", "default base branch (default: detected from the repository)")
 	cmd.Flags().StringVar(&opts.Provider, "provider", "", "hosting provider: auto, github or gitlab (default: auto)")
 	cmd.Flags().StringVar(&opts.Remote, "remote", "", "register this `url` as the remote")
@@ -74,7 +82,7 @@ func (e *env) initCmd() *cobra.Command {
 
 // createRepo runs `git init` in the current folder, after confirmation. The
 // first branch is name, or main.
-func (e *env) createRepo(ctx context.Context, name string, yes bool) (*repository.Repository, error) {
+func (e *env) createRepo(ctx context.Context, name string, yes bool, p output.Printer) (*repository.Repository, error) {
 	if name == "" {
 		name = "main"
 	}
@@ -98,53 +106,54 @@ func (e *env) createRepo(ctx context.Context, name string, yes bool) (*repositor
 		}
 		return nil, apperr.Wrap(apperr.CodeExternal, "cannot create the Git repository", "", err)
 	}
-	e.p.Success("created a Git repository in %s (branch %s)", repo.Root, name)
+	p.Success("created a Git repository in %s (branch %s)", repo.Root, name)
 	return repo, nil
 }
 
 // reportInit prints what init (or clone) did.
-func (e *env) reportInit(res initrepo.Result) {
+func (e *env) reportInit(p output.Printer, res initrepo.Result) {
 	for _, c := range res.HookChanges {
-		e.p.Success("hook %s", c.Describe())
+		p.Success("hook %s", c.Describe())
 	}
 	if res.RemoteURL != "" {
 		if res.RemoteAdded {
-			e.p.Success("added remote %s: %s", res.RemoteName, res.RemoteURL)
+			p.Success("added remote %s: %s", res.RemoteName, res.RemoteURL)
 		} else {
-			e.p.Info("remote %s already points to %s", res.RemoteName, res.RemoteURL)
+			p.Info("remote %s already points to %s", res.RemoteName, res.RemoteURL)
 		}
 	}
 	if res.ConfigPath == "" {
 		return
 	}
 	if res.ConfigCreated {
-		e.p.Success("created %s (provider: %s, base branch: %s)", res.ConfigPath, res.Provider, res.Base)
+		p.Success("created %s (provider: %s, base branch: %s)", res.ConfigPath, res.Provider, res.Base)
 	} else if res.Base != "" {
-		e.p.Info("preserved %s (already exists)", res.ConfigPath)
+		p.Info("preserved %s (already exists)", res.ConfigPath)
 	}
 	for _, n := range res.Notes {
-		e.p.Warn("%s", n)
+		p.Warn("%s", n)
 	}
 	if res.SecretCreated {
-		e.p.Success("created %s (set the token variable it references)", res.SecretPath)
+		p.Success("created %s (set the token variable it references)", res.SecretPath)
 	} else if res.Base != "" {
-		e.p.Info("preserved %s (already exists)", res.SecretPath)
+		p.Info("preserved %s (already exists)", res.SecretPath)
 	}
 	switch {
 	case res.IgnoreCreated:
-		e.p.Success("created .gitignore with %s", config.SecretFileName)
+		p.Success("created .gitignore with %s", config.SecretFileName)
 	case res.IgnoreUpdated:
-		e.p.Success("updated .gitignore: added %s", config.SecretFileName)
+		p.Success("updated .gitignore: added %s", config.SecretFileName)
 	case res.Base != "":
-		e.p.Info("preserved .gitignore (%s already ignored)", config.SecretFileName)
+		p.Info("preserved .gitignore (%s already ignored)", config.SecretFileName)
 	}
 	if res.HooksSkipped {
-		e.p.Info("hooks not installed")
+		p.Info("hooks not installed")
 	}
 }
 
 func (e *env) cloneCmd() *cobra.Command {
 	var opts initrepo.Options
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "clone <url> [folder]",
 		Short: "Clone a repository and set it up for Tide",
@@ -158,18 +167,31 @@ func (e *env) cloneCmd() *cobra.Command {
 			if len(args) == 2 {
 				target = args[1]
 			}
-			e.p.Step("Cloning %s", executor.Redact(args[0]))
-			res, err := appclone.Run(cmd.Context(), e.ex, e.dir, args[0], target, opts)
-			if res.Dir != "" {
-				e.p.Success("cloned into %s", res.Dir)
-			}
-			e.reportInit(res.Init)
-			if err == nil {
-				e.p.Info("next: cd %s", res.Dir)
-			}
-			return err
+			ctx := cmd.Context()
+			var res appclone.Result
+			return e.act(ctx, nil, asJSON, "clone", func(p output.Printer) error {
+				p.Step("Cloning %s", executor.Redact(args[0]))
+				var err error
+				res, err = appclone.Run(ctx, e.ex, e.dir, args[0], target, opts)
+				if res.Dir != "" {
+					p.Success("cloned into %s", res.Dir)
+				}
+				e.reportInit(p, res.Init)
+				if err == nil {
+					p.Info("next: cd %s", res.Dir)
+				}
+				return err
+			}, func() any {
+				d := map[string]any{"path": res.Dir, "url": executor.Redact(args[0]), "setup": initDetails(res.Init)}
+				if repo, err := repository.Open(ctx, e.ex, res.Dir); err == nil {
+					h := e.headNow(ctx, repo)
+					d["branch"], d["head"] = h.Branch, h.Head
+				}
+				return d
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the clone as JSON on stdout (the log goes to stderr)")
 	cmd.Flags().StringVar(&opts.Base, "base", "", "default base branch (default: detected from the repository)")
 	cmd.Flags().StringVar(&opts.Provider, "provider", "", "hosting provider: auto, github or gitlab (default: auto)")
 	cmd.Flags().BoolVar(&opts.NoHooks, "no-hooks", false, "do not install Git hooks")
@@ -193,6 +215,7 @@ func (e *env) remoteCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the remotes as JSON on stdout")
 	cmd.PersistentFlags().StringVar(&name, "name", "", "remote name (default: `remote` from "+config.FileName+", else origin)")
+	var addJSON, setJSON bool
 	add := &cobra.Command{
 		Use:   "add <url>",
 		Short: "Register the remote",
@@ -202,7 +225,10 @@ func (e *env) remoteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return remoteapp.Add(cmd.Context(), repo, n, args[0], e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, addJSON, "remote add", func(p output.Printer) error { return remoteapp.Add(ctx, repo, n, args[0], p) }, func() any {
+				return e.remoteDetails(ctx, repo, n)
+			})
 		},
 	}
 	set := &cobra.Command{
@@ -214,7 +240,10 @@ func (e *env) remoteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return remoteapp.SetURL(cmd.Context(), repo, n, args[0], e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, setJSON, "remote set-url", func(p output.Printer) error { return remoteapp.SetURL(ctx, repo, n, args[0], p) }, func() any {
+				return e.remoteDetails(ctx, repo, n)
+			})
 		},
 	}
 	var showJSON bool
@@ -227,6 +256,8 @@ func (e *env) remoteCmd() *cobra.Command {
 		},
 	}
 	show.Flags().BoolVar(&showJSON, "json", false, "print the remotes as JSON on stdout")
+	add.Flags().BoolVar(&addJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
+	set.Flags().BoolVar(&setJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	cmd.AddCommand(add, set, show)
 	return cmd
 }
@@ -260,7 +291,8 @@ func (e *env) remoteShow(ctx context.Context, asJSON bool) error {
 }
 
 func (e *env) updateCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "update [branch]",
 		Short: "Update the base branch and integrate it into the current branch",
 		Long: "Fetch the base branch, fast-forward the local copy, and merge or rebase it into the current branch\n" +
@@ -276,15 +308,23 @@ func (e *env) updateCmd() *cobra.Command {
 			if len(args) == 1 {
 				opts.Target = args[0]
 			}
-			return update.Run(cmd.Context(), repo, cfg, opts, e.p)
+			ctx := cmd.Context()
+			before := e.headNow(ctx, repo)
+			return e.act(ctx, repo, asJSON, "update", func(p output.Printer) error { return update.Run(ctx, repo, cfg, opts, p) }, func() any {
+				after := e.headNow(ctx, repo)
+				return map[string]any{"base": firstNonEmpty(opts.Target, cfg.BaseFor(before.Branch)), "strategy": cfg.Update.Strategy, "before": before.Head, "after": after.Head, "changed": before.Head != after.Head}
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
+	return cmd
 }
 
 func (e *env) reviewCmd() *cobra.Command {
 	var (
-		opts review.Options
-		yes  bool
+		opts   review.Options
+		yes    bool
+		asJSON bool
 	)
 	cmd := &cobra.Command{
 		Use:   "review <PR>",
@@ -310,9 +350,14 @@ func (e *env) reviewCmd() *cobra.Command {
 			if !yes {
 				opts.Confirm = e.confirm
 			}
-			return review.Run(cmd.Context(), repo, cfg, client, opts, e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, asJSON, "review", func(p output.Printer) error { return review.Run(ctx, repo, cfg, client, opts, p) }, func() any {
+				branch := e.headNow(ctx, repo).Branch
+				return map[string]any{"branch": branch, "request": args[0], "reset": opts.Reset}
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout (the log, and --diff, go to stderr)")
 	cmd.Flags().BoolVar(&opts.Reset, "reset", false, "discard local commits on an existing review branch (asks first)")
 	cmd.Flags().BoolVar(&opts.Diff, "diff", false, "print the full patch against the base branch")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation of --reset")
@@ -321,6 +366,7 @@ func (e *env) reviewCmd() *cobra.Command {
 
 func (e *env) changeCmd() *cobra.Command {
 	var opts change.Options
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:     "change <branch>",
 		Aliases: []string{"switch"},
@@ -339,9 +385,15 @@ func (e *env) changeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return change.Run(cmd.Context(), repo, cfg, args[0], opts, e.p)
+			ctx := cmd.Context()
+			before := e.headNow(ctx, repo)
+			return e.act(ctx, repo, asJSON, "change", func(p output.Printer) error { return change.Run(ctx, repo, cfg, args[0], opts, p) }, func() any {
+				after := e.headNow(ctx, repo)
+				return map[string]any{"branch": after.Branch, "previous": before.Branch, "changed": before.Branch != after.Branch}
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	cmd.Flags().BoolVar(&opts.Carry, "carry", false, "let Git carry uncommitted changes to the other branch (it refuses on conflicts)")
 	return cmd
 }
@@ -401,6 +453,7 @@ func (e *env) branchCmd() *cobra.Command {
 
 func (e *env) createCmd() *cobra.Command {
 	var opts create.Options
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "create <branch>",
 		Short: "Create a branch from an up-to-date base",
@@ -417,9 +470,17 @@ func (e *env) createCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return create.Run(cmd.Context(), repo, cfg, args[0], opts, e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, asJSON, "create", func(p output.Printer) error { return create.Run(ctx, repo, cfg, args[0], opts, p) }, func() any {
+				base := opts.From
+				if base == "" {
+					base = cfg.BaseFor(args[0])
+				}
+				return map[string]any{"branch": args[0], "from": base, "switched": !opts.NoSwitch, "pushed": opts.Push, "tracking_remote": opts.Track || opts.Push}
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	f := cmd.Flags()
 	f.StringVar(&opts.From, "from", "", "start point: a branch, tag, or commit (default: base from .tide.yml)")
 	f.BoolVar(&opts.Local, "local", false, "start from the local branch; no network")
@@ -431,8 +492,9 @@ func (e *env) createCmd() *cobra.Command {
 
 func (e *env) pushCmd() *cobra.Command {
 	var (
-		opts push.Options
-		yes  bool
+		opts   push.Options
+		yes    bool
+		asJSON bool
 	)
 	cmd := &cobra.Command{
 		Use:   "push",
@@ -451,16 +513,21 @@ func (e *env) pushCmd() *cobra.Command {
 				opts.Confirm = e.confirm
 			}
 			opts.Security = e.securityCheck(repo, cfg)
-			return push.Run(cmd.Context(), repo, cfg, opts, e.p)
+			ctx := cmd.Context()
+			return e.act(ctx, repo, asJSON, "push", func(p output.Printer) error { return push.Run(ctx, repo, cfg, opts, p) }, func() any {
+				return map[string]any{"remote": cfg.Remote, "upstream": repo.Upstream(ctx), "forced": opts.Force}
+			})
 		},
 	}
 	cmd.Flags().BoolVarP(&opts.Force, "force", "f", false, "overwrite the remote branch if it was rewritten (--force-with-lease)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation of --force")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	return cmd
 }
 
 func (e *env) commitCmd() *cobra.Command {
 	var opts appcommit.Options
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "commit",
 		Short: "Commit what is staged, checking Tide's rules first",
@@ -477,10 +544,11 @@ func (e *env) commitCmd() *cobra.Command {
 				return err
 			}
 			opts.Cwd = e.dir
-			return e.commitThenAlerts(cmd.Context(), repo, cfg, opts)
+			return e.commitThenAlerts(cmd.Context(), repo, cfg, opts, "commit", asJSON)
 		},
 	}
 	messageFlags(cmd, &opts)
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the commit made as JSON on stdout (the log goes to stderr)")
 	cmd.Flags().BoolVarP(&opts.All, "all", "a", false, "stage modifications and deletions of tracked files first")
 	return cmd
 }
@@ -594,6 +662,7 @@ func (e *env) historyShowCmd() *cobra.Command {
 
 func (e *env) saveCmd() *cobra.Command {
 	var opts appcommit.Options
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "save",
 		Short: "Stage changes and commit them in one step",
@@ -613,10 +682,11 @@ func (e *env) saveCmd() *cobra.Command {
 			}
 			opts.Everything = len(opts.Files) == 0
 			opts.Cwd = e.dir
-			return e.commitThenAlerts(cmd.Context(), repo, cfg, opts)
+			return e.commitThenAlerts(cmd.Context(), repo, cfg, opts, "save", asJSON)
 		},
 	}
 	messageFlags(cmd, &opts)
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the commit made as JSON on stdout (the log goes to stderr)")
 	cmd.Flags().StringArrayVarP(&opts.Files, "file", "f", nil, "stage only this file or directory (repeatable); default: every change")
 	return cmd
 }
@@ -630,7 +700,8 @@ func messageFlags(cmd *cobra.Command, opts *appcommit.Options) {
 }
 
 func (e *env) continueCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "continue",
 		Short: "Finish a merge, rebase, cherry-pick or revert after resolving conflicts",
 		Long: "Continue the operation that stopped on conflicts, whichever it is. Every conflict must be resolved and staged first\n" +
@@ -642,13 +713,20 @@ func (e *env) continueCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return resolve.Continue(cmd.Context(), repo, cfg, e.p)
+			ctx := cmd.Context()
+			operation, _ := repo.InProgressOperation(ctx)
+			return e.act(ctx, repo, asJSON, "continue", func(p output.Printer) error { return resolve.Continue(ctx, repo, cfg, p) }, func() any {
+				still, _ := repo.InProgressOperation(ctx)
+				return map[string]any{"operation": operation, "in_progress": still != ""}
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
+	return cmd
 }
 
 func (e *env) abortCmd() *cobra.Command {
-	var yes bool
+	var yes, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "abort",
 		Short: "Give up a merge, rebase, cherry-pick or revert and go back to before it",
@@ -664,17 +742,23 @@ func (e *env) abortCmd() *cobra.Command {
 			if !yes {
 				opts.Confirm = e.confirm
 			}
-			return resolve.Abort(cmd.Context(), repo, opts, e.p)
+			ctx := cmd.Context()
+			operation, _ := repo.InProgressOperation(ctx)
+			return e.act(ctx, repo, asJSON, "abort", func(p output.Printer) error { return resolve.Abort(ctx, repo, opts, p) }, func() any {
+				return map[string]any{"operation": operation}
+			})
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout (the log goes to stderr)")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
 	return cmd
 }
 
 func (e *env) prCmd() *cobra.Command {
 	var (
-		opts pr.Options
-		yes  bool
+		opts   pr.Options
+		yes    bool
+		asJSON bool
 	)
 	cmd := &cobra.Command{
 		Use:   "pr",
@@ -711,7 +795,15 @@ func (e *env) prCmd() *cobra.Command {
 				}
 			}
 			opts.Security = e.securityCheck(repo, cfg)
-			return pr.Run(cmd.Context(), repo, cfg, client, opts, e.p)
+			var created provider.PullRequest
+			opts.Result = &created
+			ctx := cmd.Context()
+			return e.act(ctx, repo, asJSON, "pr", func(p output.Printer) error { return pr.Run(ctx, repo, cfg, client, opts, p) }, func() any {
+				return map[string]any{
+					"provider": client.Name(), "noun": client.Noun(), "number": created.Number, "url": created.URL, "title": created.Title,
+					"draft": opts.Draft, "head": created.HeadRef, "base": created.BaseRef,
+				}
+			})
 		},
 	}
 	cmd.Flags().StringVar(&opts.Base, "base", "", "base branch (default: resolved from .tide.yml)")
@@ -719,6 +811,7 @@ func (e *env) prCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Body, "body", "", "request body (default: list of commits)")
 	cmd.Flags().BoolVar(&opts.Draft, "draft", false, "open as a draft")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the request that was opened as JSON on stdout (the log goes to stderr)")
 	cmd.AddCommand(e.prListCmd(), e.prViewCmd(), e.prStatusCmd())
 	return cmd
 }
