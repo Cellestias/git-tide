@@ -156,3 +156,19 @@ func TestSubmitReviewMapsTheDecision(t *testing.T) {
 		t.Error("an unknown decision must fail before any request")
 	}
 }
+
+func TestValidationMessageReadsTextAndObjectErrors(t *testing.T) {
+	cases := map[string]string{
+		`{"message":"Unprocessable Entity","errors":["Can not approve your own pull request"]}`:           "Unprocessable Entity: Can not approve your own pull request",
+		`{"message":"Validation Failed","errors":[{"message":"could not be resolved","code":"invalid"}]}`: "Validation Failed: could not be resolved",
+		`{"message":"Validation Failed","errors":[{"code":"missing"},"two"]}`:                             "Validation Failed: two",
+		`{"message":"Nope"}`: "Nope",
+		`not json`:           "validation failed",
+		`{"errors":["x"]}`:   "validation failed",
+	}
+	for body, want := range cases {
+		if got := validationMessage([]byte(body)); got != want {
+			t.Errorf("%s -> %q, want %q", body, got, want)
+		}
+	}
+}

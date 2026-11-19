@@ -213,17 +213,23 @@ func (c *Client) doAccept(ctx context.Context, method, endpoint string, payload 
 func validationMessage(body []byte) string {
 	var v struct {
 		Message string `json:"message"`
-		Errors  []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
+		// each error is an object with a message, or just a text (a review that cannot be made says why this way)
+		Errors []json.RawMessage `json:"errors"`
 	}
 	if json.Unmarshal(body, &v) != nil || v.Message == "" {
 		return "validation failed"
 	}
 	parts := []string{v.Message}
-	for _, e := range v.Errors {
-		if e.Message != "" {
-			parts = append(parts, e.Message)
+	for _, raw := range v.Errors {
+		var text string
+		var obj struct {
+			Message string `json:"message"`
+		}
+		switch {
+		case json.Unmarshal(raw, &text) == nil && text != "":
+			parts = append(parts, text)
+		case json.Unmarshal(raw, &obj) == nil && obj.Message != "":
+			parts = append(parts, obj.Message)
 		}
 	}
 	return strings.Join(parts, ": ")
