@@ -28,9 +28,11 @@ Every command that reads something, and every command that changes something, ca
 | `gtide security --json` | object |
 | `gtide secrets scan --json [--history]` | object |
 | `gtide doctor --json` | object |
-| `gtide pr list --json [--state] [--author] [--assignee] [--limit]` | array |
+| `gtide pr list --json [--state] [--author] [--assignee] [--reviewer] [--limit]` | array |
 | `gtide pr view <id> --json` | object |
 | `gtide pr status --json` | object |
+| `gtide pr diff <id> --json` | object |
+| `gtide pr comments <id> --json` | object |
 | `gtide config show --json` (or `gtide config --json`) | object |
 | `gtide config validate --json` | object |
 | `gtide remote show --json` (or `gtide remote --json`) | object |
@@ -254,6 +256,8 @@ A request (a pull request on GitHub, a merge request on GitLab) is the same obje
 - `pr list --json` is an array of these, newest first. A list cut at the provider's cap says so on stderr.
 - `pr status --json` is `{ "provider", "noun", "repo", "branch", "request", "review", "warnings" }`: `request` is the request of the current branch, or `null`; `review` is `null` when there is no request or the reviews could not be read, and then `warnings` says why.
 - `pr view <id> --json` is the request plus `provider`, `noun`, `repo`, `fork` (the source is another repository), `body` (the description, cut at 20 000 characters, with `body_truncated`), `review`, `files` (`path`, `old_path`, `status`, `additions`, `deletions`, `has_stats`), `commits` (`sha`, `subject`, oldest first), `files_truncated`, `commits_truncated` and `warnings`. What could not be read is `null` (the review) or `[]` (a list), and a warning names it.
+- `pr diff <id> --json` is `{ "number", "head_sha", "truncated", "files": [...] }` with, for each file, `path`, `old_path` (a rename), `status` (`added`, `modified`, `deleted`, `renamed`), `binary` and `patch` (the hunks, from the first `@@` line; empty for a binary file). `head_sha` is the newest commit of the source branch. **GitHub only** for now.
+- `pr comments <id> --json` is `{ "number", "truncated", "comments": [...] }`, oldest first. Each comment has `id`, `kind` (`conversation`, `inline` or `review`), `author`, `body` (cut at 20 000 characters, with `body_truncated`), `created_at`, `url`; inline comments also have `path`, `line`, `side` (`right` is the new version of the file, `left` the old), `diff_hunk`, `commit_sha`, `in_reply_to` (0 for the first of a thread) and `outdated` (the code changed since); a review has `review_state` (`approved`, `changes requested` or `commented`). **GitHub only** for now.
 - `review` is `{ "state": "pending" | "approved" | "changes_requested", "approvals": [], "changes_requested": [] }`.
 
 ### config show, config validate, remote show
@@ -311,6 +315,10 @@ A command that changes something prints, with `--json`, **one object with the sa
 - A prompt (`--force`, `tag push`, `branch delete`) is still asked on stderr unless `--yes` is given: a program should pass `--yes` for the ones it has the right to confirm, and nothing else.
 - `--json` on `diff --patch`, `history show`, `review --diff` and the like prints its patch to stderr when the command is an action, because stdout is the document.
 
+### pr comment, pr approve, pr request-changes
+
+These take part in a review, so they print the [action](#actions) envelope: `pr comment` has `details` `{ "provider", "number", "comment_id", "url" }` and `"action": "pr-comment"`; `pr approve` and `pr request-changes` have `{ "provider", "number", "decision" }` (`approve` or `request_changes`) and `"action": "pr-review"`. They need the provider token with write access, and fail without printing anything on stdout when it is missing or the provider refuses (you cannot approve your own request on GitHub).
+
 ## Checking the version
 
-`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `gtide security` needs **v1.8.0 or later**; `gtide secrets scan` and `gtide doctor --json` need **v1.9.0 or later**; `--json` on `pr list`, `pr view`, `pr status`, `config`, `remote show` and on every command that changes something needs **v1.10.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
+`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `gtide security` needs **v1.8.0 or later**; `gtide secrets scan` and `gtide doctor --json` need **v1.9.0 or later**; `--json` on `pr list`, `pr view`, `pr status`, `config`, `remote show` and on every command that changes something needs **v1.10.0 or later**; `pr diff`, `pr comments`, `pr comment`, `pr approve`, `pr request-changes` and `pr list --reviewer` need **v1.11.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
