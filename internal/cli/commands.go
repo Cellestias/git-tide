@@ -814,7 +814,7 @@ func (e *env) prCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.Draft, "draft", false, "open as a draft")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the request that was opened as JSON on stdout (the log goes to stderr)")
-	cmd.AddCommand(e.prListCmd(), e.prViewCmd(), e.prStatusCmd(), e.prDiffCmd(), e.prCommentsCmd(), e.prCommentCmd(), e.prApproveCmd(), e.prRequestChangesCmd())
+	cmd.AddCommand(e.prListCmd(), e.prViewCmd(), e.prStatusCmd(), e.prDiffCmd(), e.prCommentsCmd(), e.prCommentCmd(), e.prApproveCmd(), e.prRequestChangesCmd(), e.prCommitCmd(), e.prEditCmd(), e.prOptionsCmd())
 	return cmd
 }
 
@@ -1012,6 +1012,89 @@ func (e *env) prRequestChangesCmd() *cobra.Command {
 		"Send a review that asks for changes, with the reason, as the owner of the provider token. Use `pr comment --file --line`\n"+
 			"first to point at the lines.",
 		"  gtide pr request-changes 42 --body \"The token is logged in plain text\"", provider.DecisionRequestChanges, true)
+}
+
+func (e *env) prCommitCmd() *cobra.Command {
+	var opts pr.CommitOptions
+	cmd := &cobra.Command{
+		Use:   "commit <id> <sha>",
+		Short: "Show one commit of a Pull Request / Merge Request",
+		Long: "Show a commit of a request with who made it, when, and the files it changed with their hunks, read from the provider:\n" +
+			"the commit does not have to be in the local repository.",
+		Example: "  gtide pr commit 42 1a2b3c4\n  gtide pr commit 42 1a2b3c4 --json",
+		Args:    exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, cfg, client, err := e.reviewEnv(cmd)
+			if err != nil {
+				return err
+			}
+			opts.Ref, opts.SHA = args[0], args[1]
+			return pr.ShowCommit(cmd.Context(), repo, cfg, client, opts, e.p)
+		},
+	}
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "print the commit and its files as JSON on stdout")
+	return cmd
+}
+
+func (e *env) prEditCmd() *cobra.Command {
+	var (
+		opts   pr.EditOptions
+		asJSON bool
+	)
+	cmd := &cobra.Command{
+		Use:   "edit <id>",
+		Short: "Change the reviewers, the assignees and the labels of a Pull Request / Merge Request",
+		Long: "Add or remove the people asked to review, the people assigned and the labels. Each flag takes names separated by commas\n" +
+			"and can be repeated. Needs the provider token with write access; `gtide pr options` lists what can be chosen.",
+		Example: "  gtide pr edit 42 --add-reviewer alice,bob --add-label bug\n  gtide pr edit 42 --remove-reviewer bob --add-assignee me-too",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, cfg, client, err := e.reviewEnv(cmd)
+			if err != nil {
+				return err
+			}
+			opts.Ref = args[0]
+			var done provider.PullEdit
+			return e.act(cmd.Context(), repo, asJSON, "pr-edit", func(p output.Printer) error {
+				return pr.Edit(cmd.Context(), repo, cfg, client, opts, &done, p)
+			}, func() any {
+				return map[string]any{
+					"provider": client.Name(), "number": args[0],
+					"added_reviewers": done.AddReviewers, "removed_reviewers": done.RemoveReviewers,
+					"added_assignees": done.AddAssignees, "removed_assignees": done.RemoveAssignees,
+					"added_labels": done.AddLabels, "removed_labels": done.RemoveLabels,
+				}
+			})
+		},
+	}
+	f := cmd.Flags()
+	f.StringSliceVar(&opts.AddReviewers, "add-reviewer", nil, "ask these logins to review")
+	f.StringSliceVar(&opts.RemoveReviewers, "remove-reviewer", nil, "take these logins off the reviewers")
+	f.StringSliceVar(&opts.AddAssignees, "add-assignee", nil, "assign these logins")
+	f.StringSliceVar(&opts.RemoveAssignees, "remove-assignee", nil, "unassign these logins")
+	f.StringSliceVar(&opts.AddLabels, "add-label", nil, "add these labels")
+	f.StringSliceVar(&opts.RemoveLabels, "remove-label", nil, "remove these labels")
+	f.BoolVar(&asJSON, "json", false, "print what was done as JSON on stdout (the log goes to stderr)")
+	return cmd
+}
+
+func (e *env) prOptionsCmd() *cobra.Command {
+	var opts pr.ChoicesOptions
+	cmd := &cobra.Command{
+		Use:   "options",
+		Short: "List the labels and the people a request can use",
+		Long:  "List the labels of the repository and the people a request can be assigned to or sent to for review.",
+		Args:  maxArgs(0),
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			repo, cfg, client, err := e.reviewEnv(cmd)
+			if err != nil {
+				return err
+			}
+			return pr.Choices(cmd.Context(), repo, cfg, client, opts, e.p)
+		},
+	}
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "print the labels and the people as JSON on stdout")
+	return cmd
 }
 
 func (e *env) prStatusCmd() *cobra.Command {

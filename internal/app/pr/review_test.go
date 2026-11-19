@@ -282,3 +282,148 @@ func TestListReviewerKeepsTheRequestsWaitingForThatPerson(t *testing.T) {
 		t.Errorf("the provider is asked for its whole page when the review requests are told apart here: %+v", h.gotList)
 	}
 }
+
+// manageHost is a reviewHost that can also be edited and read commit by commit.
+type manageHost struct {
+	*reviewHost
+	detail provider.CommitDetail
+	edits  []provider.PullEdit
+	labels []provider.Label
+	people []string
+}
+
+func (h *manageHost) CommitDetail(context.Context, provider.Repo, string) (provider.CommitDetail, error) {
+	return h.detail, nil
+}
+func (h *manageHost) Labels(context.Context, provider.Repo) ([]provider.Label, bool, error) {
+	return h.labels, false, nil
+}
+func (h *manageHost) People(context.Context, provider.Repo) ([]string, bool, error) {
+	return h.people, false, nil
+}
+func (h *manageHost) Edit(_ context.Context, _ provider.Repo, _ int, e provider.PullEdit) error {
+	h.edits = append(h.edits, e)
+	return nil
+}
+
+func newManageHost() *manageHost {
+	return &manageHost{reviewHost: &reviewHost{fakeHost: &fakeHost{token: true, user: "me", single: sample()}}}
+}
+
+func TestShowCommitJSONHasTheAuthorTheDateAndMarksFilesWithoutHunks(t *testing.T) {
+	h := newManageHost()
+	h.detail = provider.CommitDetail{SHA: "abc1234full", Author: "ana", Name: "Ana S", Email: "a@x.io", Date: time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC), Subject: "feat: login\x1b[31m", Body: "the body",
+		Files: []provider.CommitFile{{Path: "a.go", Status: "modified", Additions: 2, Deletions: 1, Patch: "@@ -1 +1 @@\n+x"}, {Path: "big.bin", Status: "added", Additions: 40}, {Path: "empty.txt", Status: "added"}}}
+	out, _, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
+		return ShowCommit(ctx, repo, cfg, h, CommitOptions{Ref: "42", SHA: "abc1234", JSON: true}, p)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Author, Date, Subject string
+		Files                 []jsonCommitFile
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	if doc.Author != "ana" || doc.Date != "2026-11-03T10:00:00Z" || strings.ContainsRune(doc.Subject, 0x1b) || len(doc.Files) != 3 {
+		t.Errorf("doc = %+v", doc)
+	}
+	if doc.Files[0].PatchMissing || !doc.Files[1].PatchMissing || doc.Files[2].PatchMissing {
+		t.Errorf("a file that changed lines but has no hunks is marked, an empty file is not: %+v", doc.Files)
+	}
+	if _, _, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
+		return ShowCommit(ctx, repo, cfg, h, CommitOptions{Ref: "42", SHA: "--help"}, p)
+	}); err == nil {
+		t.Error("a commit that is not hexadecimal is a usage error")
+	}
+}
+
+func TestEditChecksNamesAndNeedsSomethingToDo(t *testing.T) {
+	run := func(h *manageHost, o EditOptions) (provider.PullEdit, error) {
+		var done provider.PullEdit
+		_, _, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
+			return Edit(ctx, repo, cfg, h, o, &done, p)
+		})
+		return done, err
+	}
+	h := newManageHost()
+	for name, o := range map[string]EditOptions{
+		"nothing":       {Ref: "42"},
+		"bad login":     {Ref: "42", AddReviewers: []string{"a b"}},
+		"flag as login": {Ref: "42", AddAssignees: []string{"--x"}},
+		"long label":    {Ref: "42", AddLabels: []string{strings.Repeat("x", 51)}},
+		"control label": {Ref: "42", AddLabels: []string{"a\x1bb"}},
+	} {
+		if _, err := run(h, o); err == nil {
+			t.Errorf("%s: expected a usage error", name)
+		}
+	}
+	if len(h.edits) != 0 {
+		t.Fatalf("nothing is sent when the arguments are wrong: %+v", h.edits)
+	}
+	done, err := run(h, EditOptions{Ref: "42", AddReviewers: []string{"@Alice, bob", "alice"}, RemoveAssignees: []string{"cy"}, AddLabels: []string{"bug, needs work"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(done.AddReviewers) != 2 || done.AddReviewers[0] != "Alice" || done.AddReviewers[1] != "bob" || done.RemoveAssignees[0] != "cy" || len(done.AddLabels) != 2 || done.AddLabels[1] != "needs work" {
+		t.Errorf("done = %+v: names are split on commas, a leading @ is dropped and a repeat is kept once", done)
+	}
+	noToken := newManageHost()
+	noToken.fakeHost.token = false
+	if _, err := run(noToken, EditOptions{Ref: "42", AddLabels: []string{"bug"}}); err == nil {
+		t.Error("changing a request needs the token")
+	}
+}
+
+func TestChoicesListsLabelsAndPeople(t *testing.T) {
+	h := newManageHost()
+	h.labels = []provider.Label{{Name: "bug", Color: "d73a4a", Description: "wrong"}, {Name: "evil", Color: "red;background:url(x)"}}
+	h.people = []string{"ana", "bo"}
+	out, _, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
+		return Choices(ctx, repo, cfg, h, ChoicesOptions{JSON: true}, p)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Labels []jsonLabel
+		People []string
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil || len(doc.Labels) != 2 || len(doc.People) != 2 {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if doc.Labels[0].Color != "d73a4a" || doc.Labels[1].Color != "" {
+		t.Errorf("a colour that is not six hex digits is dropped, so it can never reach a style: %+v", doc.Labels)
+	}
+}
+
+func TestViewJSONCarriesTheViewerLabelsAndCommitAuthors(t *testing.T) {
+	h := &fakeHost{token: true, user: "me", single: sample(), commits: []provider.CommitSummary{{SHA: "abc", Subject: "feat: a", Author: "ana", Date: time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)}}}
+	h.single.Labels = []provider.Label{{Name: "bug", Color: "d73a4a"}}
+	out, _, err := runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
+		return View(ctx, repo, cfg, h, "42", true, p)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Viewer  string
+		Labels  []jsonLabel
+		Commits []jsonCommit
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Viewer != "me" || len(doc.Labels) != 1 || doc.Labels[0].Name != "bug" || doc.Commits[0].Author != "ana" || doc.Commits[0].Date != "2026-11-03T10:00:00Z" {
+		t.Errorf("doc = %+v", doc)
+	}
+	h.token = false
+	out, _, _ = runWith(t, func(ctx context.Context, repo *repository.Repository, cfg domain.Config, p output.Printer) error {
+		return View(ctx, repo, cfg, h, "42", true, p)
+	})
+	if !strings.Contains(out, `"viewer": ""`) {
+		t.Errorf("without a token the viewer is empty:\n%s", out)
+	}
+}
