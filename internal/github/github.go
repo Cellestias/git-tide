@@ -169,8 +169,13 @@ func (c *Client) pullsURL(repo Repo) string {
 // do performs a request and maps error statuses to errors that never contain
 // the token or the request URL.
 func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte) ([]byte, error) {
+	return c.doAccept(ctx, method, endpoint, payload, "application/vnd.github+json")
+}
+
+// doAccept is do with another media type asked for, such as the raw diff.
+func (c *Client) doAccept(ctx context.Context, method, endpoint string, payload []byte, accept string) ([]byte, error) {
 	hdr := map[string]string{
-		"Accept":               "application/vnd.github+json",
+		"Accept":               accept,
 		"X-GitHub-Api-Version": "2022-11-28",
 		"User-Agent":           "git-tide",
 	}
@@ -246,6 +251,7 @@ func decodePullRequest(body []byte) (PullRequest, error) {
 		} `json:"requested_reviewers"`
 		Head struct {
 			Ref  string `json:"ref"`
+			SHA  string `json:"sha"`
 			Repo *struct {
 				FullName string `json:"full_name"`
 			} `json:"repo"`
@@ -266,6 +272,7 @@ func decodePullRequest(body []byte) (PullRequest, error) {
 		URL:       raw.HTMLURL,
 		Author:    raw.User.Login,
 		HeadRef:   raw.Head.Ref,
+		HeadSHA:   raw.Head.SHA,
 		BaseRef:   raw.Base.Ref,
 		CreatedAt: raw.CreatedAt,
 		UpdatedAt: raw.UpdatedAt,

@@ -42,6 +42,7 @@ type PullRequest struct {
 	Assignees []string
 	Reviewers []string // reviews still requested
 	HeadRef   string
+	HeadSHA   string // the newest commit of the source branch
 	BaseRef   string
 	HeadRepo  string // full path of the head repository; empty if unknown or deleted
 	CreatedAt time.Time
