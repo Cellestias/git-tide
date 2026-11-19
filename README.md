@@ -576,7 +576,7 @@ gtide pr view 42
 
 Review status is one of `approved by ...`, `changes requested by ...`, or `review required`, followed by `waiting on ...` for reviewers still requested. GitLab's REST API has no "changes requested" state, so there the status is `approved` or `review required`, and GitLab reports no per-file line counts. The description, files and commits are capped (lists show "… and N more"). When one of the extra lookups fails, Tide prints a warning and shows the rest.
 
-### `gtide pr diff`, `comments`, `comment`, `approve`, `request-changes`
+### `gtide pr diff`, `comments`, `comment`, `approve`, `request-changes`, `commit`, `edit`, `options`
 
 Read and take part in a review without leaving the terminal (GitHub; GitLab is next).
 
@@ -590,6 +590,10 @@ gtide pr comment 42 --file src/auth.go --reply-to 123456 --body "Fixed"
 gtide pr approve 42
 gtide pr request-changes 42 --body "The token is logged in plain text"
 gtide pr list --reviewer me               # what waits for your review
+gtide pr commit 42 1a2b3c4                # one commit of the request: who, when, and its files
+gtide pr options                          # the labels and the people you can choose from
+gtide pr edit 42 --add-reviewer alice,bob --add-label bug --add-assignee carol
+gtide pr edit 42 --remove-reviewer bob
 ```
 
 A comment on a line goes on the newest commit of the request (`--side left` is the old version of the file). The commands that write need the token with write access; you cannot approve your own request on GitHub. Each has `--json`; see [docs/json.md](docs/json.md).
