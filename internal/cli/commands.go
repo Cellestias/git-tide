@@ -26,6 +26,7 @@ import (
 	"github.com/cellestias/git-tide/internal/app/update"
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/config"
+	domain "github.com/cellestias/git-tide/internal/domain/config"
 	"github.com/cellestias/git-tide/internal/git/executor"
 	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/output"
@@ -772,7 +773,8 @@ func (e *env) prCmd() *cobra.Command {
 			"non-interactive stdin asks nothing and uses the file when present, else the defaults.\n" +
 			"Requires the provider token (GITHUB_TOKEN / GITLAB_TOKEN, or provider_token in secret.tide.yml; .env at the repository root\n" +
 			"also works) with write access. Asks for confirmation unless --yes is given.\n\n" +
-			"Subcommands: `pr list`, `pr view <id>` and `pr status` read from the provider; `gtide review <id>` checks a request out.",
+			"Subcommands: `pr list`, `pr view <id>`, `pr status`, `pr diff <id>` and `pr comments <id>` read from the provider;\n" +
+			"`pr comment <id>`, `pr approve <id>` and `pr request-changes <id>` take part in a review; `gtide review <id>` checks a request out.",
 		Example: "  gtide pr --draft\n  gtide pr --base develop --title \"Add authentication\"\n  gtide pr list --state merged --author me\n  gtide pr view 42\n  gtide pr status",
 		Args:    maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -812,7 +814,7 @@ func (e *env) prCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.Draft, "draft", false, "open as a draft")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask for confirmation")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the request that was opened as JSON on stdout (the log goes to stderr)")
-	cmd.AddCommand(e.prListCmd(), e.prViewCmd(), e.prStatusCmd())
+	cmd.AddCommand(e.prListCmd(), e.prViewCmd(), e.prStatusCmd(), e.prDiffCmd(), e.prCommentsCmd(), e.prCommentCmd(), e.prApproveCmd(), e.prRequestChangesCmd())
 	return cmd
 }
 
@@ -822,8 +824,9 @@ func (e *env) prListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List Pull Requests / Merge Requests of the repository",
 		Long: "List the Pull Requests (GitHub) or Merge Requests (GitLab) of the repository, newest first: number, title, author,\n" +
-			"state, source branch and target branch. Filter with --state (open, closed, merged or all), --author and --assignee;\n" +
-			"`me` means the owner of the provider token. Public repositories need no token.",
+			"state, source branch and target branch. Filter with --state (open, closed, merged or all), --author, --assignee and\n" +
+			"--reviewer (the requests still waiting for that person's review); `me` means the owner of the provider token.\n" +
+			"Public repositories need no token.",
 		Example: "  gtide pr list\n  gtide pr list --state closed --limit 50\n  gtide pr list --author me --assignee alice",
 		Args:    maxArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -841,6 +844,7 @@ func (e *env) prListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.State, "state", "open", "open, closed, merged or all")
 	cmd.Flags().StringVar(&opts.Author, "author", "", "only requests by this login (`me` for yourself)")
 	cmd.Flags().StringVar(&opts.Assignee, "assignee", "", "only requests assigned to this login (`me` for yourself)")
+	cmd.Flags().StringVar(&opts.Reviewer, "reviewer", "", "only requests still waiting for this login's review (`me` for yourself)")
 	cmd.Flags().IntVar(&opts.Limit, "limit", pr.DefaultListLimit, fmt.Sprintf("maximum number of requests (1-%d)", pr.MaxListLimit))
 	cmd.Flags().BoolVar(&opts.JSON, "json", false, "print the requests as a JSON array on stdout")
 	return cmd
@@ -869,6 +873,145 @@ func (e *env) prViewCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the request, its review, files and commits as JSON on stdout")
 	return cmd
+}
+
+// reviewEnv resolves what the review commands share: the repository, its configuration and the provider.
+func (e *env) reviewEnv(cmd *cobra.Command) (*repository.Repository, domain.Config, provider.Provider, error) {
+	repo, cfg, err := e.requireConfig(cmd.Context())
+	if err != nil {
+		return nil, domain.Config{}, nil, err
+	}
+	client, err := e.provider(cmd.Context(), repo, cfg)
+	if err != nil {
+		return nil, domain.Config{}, nil, err
+	}
+	return repo, cfg, client, nil
+}
+
+func (e *env) prDiffCmd() *cobra.Command {
+	var opts pr.DiffOptions
+	cmd := &cobra.Command{
+		Use:   "diff <id>",
+		Short: "Show the changes of a Pull Request / Merge Request",
+		Long: "Print the patch of a request as the provider sees it, without checking anything out. --file keeps one file.\n" +
+			"--json gives one entry per file (path, status, the hunks), the head commit and whether the patch was cut.",
+		Example: "  gtide pr diff 42\n  gtide pr diff 42 --file src/auth.go\n  gtide pr diff 42 --json",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, cfg, client, err := e.reviewEnv(cmd)
+			if err != nil {
+				return err
+			}
+			opts.Ref = args[0]
+			return pr.Diff(cmd.Context(), repo, cfg, client, opts, e.p)
+		},
+	}
+	cmd.Flags().StringVarP(&opts.File, "file", "f", "", "only this file")
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "print the files of the patch as JSON on stdout")
+	return cmd
+}
+
+func (e *env) prCommentsCmd() *cobra.Command {
+	var opts pr.CommentsOptions
+	cmd := &cobra.Command{
+		Use:   "comments <id>",
+		Short: "List what was said on a Pull Request / Merge Request",
+		Long: "List the discussion, the comments on lines of the diff (with the file, the line and whether the code changed since)\n" +
+			"and the text of the reviews, oldest first. Public repositories need no token.",
+		Example: "  gtide pr comments 42\n  gtide pr comments 42 --json",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, cfg, client, err := e.reviewEnv(cmd)
+			if err != nil {
+				return err
+			}
+			opts.Ref = args[0]
+			return pr.Comments(cmd.Context(), repo, cfg, client, opts, e.p)
+		},
+	}
+	cmd.Flags().BoolVar(&opts.JSON, "json", false, "print the comments as JSON on stdout")
+	return cmd
+}
+
+func (e *env) prCommentCmd() *cobra.Command {
+	var (
+		opts   pr.CommentOptions
+		asJSON bool
+	)
+	cmd := &cobra.Command{
+		Use:   "comment <id>",
+		Short: "Comment on a Pull Request / Merge Request",
+		Long: "Say something in the discussion of a request. With --file and --line the comment goes on that line of the diff\n" +
+			"(--side left for the old version of the file); with --file and --reply-to it answers a comment on a line.\n" +
+			"Needs the provider token with write access.",
+		Example: "  gtide pr comment 42 --body \"Thanks, merging after CI\"\n  gtide pr comment 42 --file src/auth.go --line 31 --body \"Why not reuse parse()?\"",
+		Args:    exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, cfg, client, err := e.reviewEnv(cmd)
+			if err != nil {
+				return err
+			}
+			opts.Ref = args[0]
+			var made pr.Commented
+			return e.act(cmd.Context(), repo, asJSON, "pr-comment", func(p output.Printer) error {
+				return pr.Comment(cmd.Context(), repo, cfg, client, opts, &made, p)
+			}, func() any {
+				return map[string]any{"provider": client.Name(), "number": made.Number, "comment_id": made.CommentID, "url": made.URL}
+			})
+		},
+	}
+	cmd.Flags().StringVarP(&opts.Body, "body", "m", "", "what to say")
+	cmd.Flags().StringVarP(&opts.Path, "file", "f", "", "comment on this file of the diff")
+	cmd.Flags().IntVar(&opts.Line, "line", 0, "the line, with --file")
+	cmd.Flags().StringVar(&opts.Side, "side", "right", "with --file: right (the new version) or left (the old one)")
+	cmd.Flags().Int64Var(&opts.InReplyTo, "reply-to", 0, "with --file: the id of the comment this answers")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print what was done as JSON on stdout (the log goes to stderr)")
+	return cmd
+}
+
+func (e *env) prReviewCmd(use, short, long, example, decision string, bodyRequired bool) *cobra.Command {
+	var (
+		opts   = pr.ReviewOptions{Decision: decision}
+		asJSON bool
+	)
+	cmd := &cobra.Command{
+		Use: use, Short: short, Long: long, Example: example,
+		Args: exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			repo, cfg, client, err := e.reviewEnv(cmd)
+			if err != nil {
+				return err
+			}
+			opts.Ref = args[0]
+			var made pr.Commented
+			return e.act(cmd.Context(), repo, asJSON, "pr-review", func(p output.Printer) error {
+				return pr.Review(cmd.Context(), repo, cfg, client, opts, &made, p)
+			}, func() any {
+				return map[string]any{"provider": client.Name(), "number": made.Number, "decision": made.Decision}
+			})
+		},
+	}
+	usage := "what to say with it"
+	if bodyRequired {
+		usage += " (required)"
+	}
+	cmd.Flags().StringVarP(&opts.Body, "body", "m", "", usage)
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print what was done as JSON on stdout (the log goes to stderr)")
+	return cmd
+}
+
+func (e *env) prApproveCmd() *cobra.Command {
+	return e.prReviewCmd("approve <id>", "Approve a Pull Request / Merge Request",
+		"Approve a request as the owner of the provider token, optionally saying why. The provider decides whether you may:\n"+
+			"you cannot approve your own request on GitHub.",
+		"  gtide pr approve 42\n  gtide pr approve 42 --body \"Tested locally\"", provider.DecisionApprove, false)
+}
+
+func (e *env) prRequestChangesCmd() *cobra.Command {
+	return e.prReviewCmd("request-changes <id>", "Ask for changes on a Pull Request / Merge Request",
+		"Send a review that asks for changes, with the reason, as the owner of the provider token. Use `pr comment --file --line`\n"+
+			"first to point at the lines.",
+		"  gtide pr request-changes 42 --body \"The token is logged in plain text\"", provider.DecisionRequestChanges, true)
 }
 
 func (e *env) prStatusCmd() *cobra.Command {
