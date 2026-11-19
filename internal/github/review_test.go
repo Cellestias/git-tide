@@ -172,3 +172,94 @@ func TestValidationMessageReadsTextAndObjectErrors(t *testing.T) {
 		}
 	}
 }
+
+func manageServer(t *testing.T, calls *[]string) *Client {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		*calls = append(*calls, r.Method+" "+r.URL.Path+" "+string(b))
+		switch r.Method + " " + r.URL.Path {
+		case "GET /repos/acme/tool/commits/abc1234":
+			w.Write([]byte(`{"sha":"abc1234full","author":{"login":"ana"},"commit":{"message":"feat: login\n\nthe body\nmore","author":{"name":"Ana S","email":"a@x.io","date":"2026-11-03T10:00:00Z"}},
+				"files":[{"filename":"a.go","status":"modified","additions":2,"deletions":1,"patch":"@@ -1 +1,2 @@\n keep\n+new"},
+				{"filename":"n.txt","previous_filename":"o.txt","status":"renamed","additions":0,"deletions":0},
+				{"filename":"gone.txt","status":"removed","additions":0,"deletions":3,"patch":"@@ -1,3 +0,0 @@\n-x"}]}`))
+		case "GET /repos/acme/tool/labels":
+			w.Write([]byte(`[{"name":"bug","color":"d73a4a","description":"Something is wrong"},{"name":"docs","color":"0075ca","description":null}]`))
+		case "GET /repos/acme/tool/assignees":
+			w.Write([]byte(`[{"login":"ana"},{"login":"bo"},{"login":""}]`))
+		case "DELETE /repos/acme/tool/issues/7/labels/missing":
+			w.WriteHeader(404)
+			w.Write([]byte(`{"message":"Label does not exist"}`))
+		case "DELETE /repos/acme/tool/issues/7/labels/needs%20work":
+			w.Write([]byte(`[]`)) // net/http decodes the path in r.URL.Path, see below
+		default:
+			if strings.HasPrefix(r.URL.Path, "/repos/acme/tool/issues/7/labels/") {
+				w.Write([]byte(`[]`))
+				return
+			}
+			w.Write([]byte(`{}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return &Client{BaseURL: srv.URL, Token: "tok", HTTP: srv.Client()}
+}
+
+func TestCommitDetailReadsAuthorDateAndFiles(t *testing.T) {
+	var calls []string
+	c := manageServer(t, &calls)
+	d, err := c.CommitDetail(context.Background(), testRepo, "abc1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Author != "ana" || d.Name != "Ana S" || d.Email != "a@x.io" || d.Subject != "feat: login" || d.Body != "the body\nmore" || d.Date.Year() != 2026 || d.Cut {
+		t.Errorf("commit = %+v", d)
+	}
+	if len(d.Files) != 3 || d.Files[0].Patch == "" || d.Files[1].Status != "renamed" || d.Files[1].OldPath != "o.txt" || d.Files[2].Status != "deleted" {
+		t.Errorf("files = %+v", d.Files)
+	}
+}
+
+func TestLabelsAndPeople(t *testing.T) {
+	var calls []string
+	c := manageServer(t, &calls)
+	labels, _, err := c.Labels(context.Background(), testRepo)
+	if err != nil || len(labels) != 2 || labels[0].Name != "bug" || labels[0].Color != "d73a4a" || labels[1].Description != "" {
+		t.Errorf("labels = %+v %v", labels, err)
+	}
+	people, _, err := c.People(context.Background(), testRepo)
+	if err != nil || len(people) != 2 || people[1] != "bo" {
+		t.Errorf("people = %v %v: an entry with no login is left out", people, err)
+	}
+}
+
+func TestEditSendsEachChangeOnItsOwnAndLeavesAMissingLabelAlone(t *testing.T) {
+	var calls []string
+	c := manageServer(t, &calls)
+	err := c.Edit(context.Background(), testRepo, 7, provider.PullEdit{
+		AddReviewers: []string{"ana"}, RemoveReviewers: []string{"bo"},
+		AddAssignees: []string{"cy"}, RemoveAssignees: []string{"dee"},
+		AddLabels: []string{"bug"}, RemoveLabels: []string{"missing", "needs work"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(calls, "\n")
+	for _, want := range []string{
+		`POST /repos/acme/tool/pulls/7/requested_reviewers {"reviewers":["ana"]}`,
+		`DELETE /repos/acme/tool/pulls/7/requested_reviewers {"reviewers":["bo"]}`,
+		`POST /repos/acme/tool/issues/7/assignees {"assignees":["cy"]}`,
+		`DELETE /repos/acme/tool/issues/7/assignees {"assignees":["dee"]}`,
+		`POST /repos/acme/tool/issues/7/labels {"labels":["bug"]}`,
+		`DELETE /repos/acme/tool/issues/7/labels/missing`,
+		`DELETE /repos/acme/tool/issues/7/labels/needs work`,
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("never sent %q:\n%s", want, all)
+		}
+	}
+	calls = nil
+	if err := c.Edit(context.Background(), testRepo, 7, provider.PullEdit{}); err != nil || len(calls) != 0 {
+		t.Errorf("an empty edit sends nothing: %v %v", err, calls)
+	}
+}

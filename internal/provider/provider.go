@@ -41,6 +41,7 @@ type PullRequest struct {
 	Author    string
 	Assignees []string
 	Reviewers []string // reviews still requested
+	Labels    []Label
 	HeadRef   string
 	HeadSHA   string // the newest commit of the source branch
 	BaseRef   string
@@ -93,6 +94,8 @@ type ChangedFile struct {
 type CommitSummary struct {
 	SHA     string
 	Subject string
+	Author  string // the login when the provider knows it, else the name on the commit
+	Date    time.Time
 }
 
 // Review states, derived from the individual reviews.

@@ -255,6 +255,11 @@ func decodePullRequest(body []byte) (PullRequest, error) {
 		RequestedReviewers []struct {
 			Login string `json:"login"`
 		} `json:"requested_reviewers"`
+		Labels []struct {
+			Name        string `json:"name"`
+			Color       string `json:"color"`
+			Description string `json:"description"`
+		} `json:"labels"`
 		Head struct {
 			Ref  string `json:"ref"`
 			SHA  string `json:"sha"`
@@ -291,6 +296,9 @@ func decodePullRequest(body []byte) (PullRequest, error) {
 	}
 	for _, r := range raw.RequestedReviewers {
 		pr.Reviewers = append(pr.Reviewers, r.Login)
+	}
+	for _, l := range raw.Labels {
+		pr.Labels = append(pr.Labels, provider.Label{Name: l.Name, Color: l.Color, Description: l.Description})
 	}
 	if raw.Head.Repo != nil {
 		pr.HeadRepo = raw.Head.Repo.FullName
@@ -452,15 +460,26 @@ func (c *Client) Commits(ctx context.Context, repo Repo, number int) (commits []
 	truncated, err = c.eachItem(ctx, fmt.Sprintf("%s/%d/commits", c.pullsURL(repo), number), func(raw json.RawMessage) error {
 		var cm struct {
 			SHA    string `json:"sha"`
+			Author *struct {
+				Login string `json:"login"`
+			} `json:"author"`
 			Commit struct {
 				Message string `json:"message"`
+				Author  struct {
+					Name string    `json:"name"`
+					Date time.Time `json:"date"`
+				} `json:"author"`
 			} `json:"commit"`
 		}
 		if err := json.Unmarshal(raw, &cm); err != nil {
 			return err
 		}
 		subject, _, _ := strings.Cut(cm.Commit.Message, "\n")
-		commits = append(commits, CommitSummary{SHA: cm.SHA, Subject: strings.TrimSpace(subject)})
+		author := cm.Commit.Author.Name
+		if cm.Author != nil && cm.Author.Login != "" {
+			author = cm.Author.Login
+		}
+		commits = append(commits, CommitSummary{SHA: cm.SHA, Subject: strings.TrimSpace(subject), Author: author, Date: cm.Commit.Author.Date})
 		return nil
 	})
 	return commits, truncated, err
