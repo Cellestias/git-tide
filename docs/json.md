@@ -326,6 +326,31 @@ A command that changes something prints, with `--json`, **one object with the sa
 
 `pr edit` has `details` `{ "provider", "number", "added_reviewers", "removed_reviewers", "added_assignees", "removed_assignees", "added_labels", "removed_labels" }` and `"action": "pr-edit"`. These take part in a review, so they print the [action](#actions) envelope: `pr comment` has `details` `{ "provider", "number", "comment_id", "url" }` and `"action": "pr-comment"`; `pr approve` and `pr request-changes` have `{ "provider", "number", "decision" }` (`approve` or `request_changes`) and `"action": "pr-review"`. They need the provider token with write access, and fail without printing anything on stdout when it is missing or the provider refuses (you cannot approve your own request on GitHub).
 
+## Dry run: `--dry-run`
+
+With `--dry-run` a command that changes something prints the same envelope, with a `dry_run` object, and changes nothing (see the [README](../README.md#dry-run---dry-run)):
+
+```json
+{
+  "ok": true,
+  "action": "save",
+  "branch": "feature/x",
+  "head": "1a2b3c4d5e6f...",
+  "details": {},
+  "dry_run": {
+    "would": ["git add --all", "git commit -m feat: add login"],
+    "stopped": ""
+  }
+}
+```
+
+- `dry_run` is **only present in a dry run**. Its presence is how a program knows that nothing happened.
+- `would` is the list of steps that would run, in order, as text meant to be read: `git ...` for Git, `POST <address>` or `DELETE <address>` (no query string, no credentials) for the provider, `create <path>`, `add <entry> to <path>` and `hook <name>: installed` for files. It is `[]` when nothing would change.
+- `stopped` is set (and omitted otherwise) when a step needs the result of an earlier one that was not made, so the list ends there. The exit code is still `0`.
+- `branch` and `head` are the ones **now**, because nothing moved. `details` holds what the command can say without having run, and is often `{}`.
+- A command that would be refused (protected branch, secret, wrong state) exits with its usual non-zero code, prints nothing on stdout and says why on stderr, exactly as without the flag.
+- A reading command with `--dry-run` prints its usual document, with no `dry_run`.
+
 ## Checking the version
 
 `gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `gtide security` needs **v1.8.0 or later**; `gtide secrets scan` and `gtide doctor --json` need **v1.9.0 or later**; `--json` on `pr list`, `pr view`, `pr status`, `config`, `remote show` and on every command that changes something needs **v1.10.0 or later**; `pr diff`, `pr comments`, `pr comment`, `pr approve`, `pr request-changes`, `pr commit`, `pr edit`, `pr options`, `pr list --reviewer` and the `viewer`, `labels` and commit `author`/`date` of `pr view` need **v1.11.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
