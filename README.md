@@ -22,6 +22,7 @@ Git stays the source of truth. Tide runs the Git you already have, needs no serv
 - [Configuration](#configuration)
 - [Security alerts](#security-alerts)
 - [Authentication](#authentication)
+- [Dry run](#dry-run---dry-run)
 - [What the hooks do](#what-the-hooks-do)
 - [Exit codes](#exit-codes)
 - [Machine-readable output](#machine-readable-output)
@@ -874,6 +875,34 @@ GITLAB_TOKEN=glpat-xxx
 Only the keys above are read from `.env`; the rest of the file is ignored and nothing is exported to other processes. Quotes, `export` and `#` comments are understood; `$VARIABLE` is not expanded. The file must be a regular file of at most 64 KB.
 
 If `.env` is **tracked by Git**, Tide refuses to use it, since the token is already exposed: revoke it and run `git rm --cached .env`. If `.env` is not covered by `.gitignore`, Tide uses it but warns, because a careless `git add` (including `gtide save` without `-f`) would commit it. A token is never written to the output or to error messages. You can also reuse your CLI login: `export GITHUB_TOKEN=$(gh auth token)` or `export GITLAB_TOKEN=$(glab auth token)`.
+
+## Dry run: `--dry-run`
+
+Every command takes `--dry-run`. It runs the command up to the point where something would change, lists what it would have done, and changes nothing: no commit, no push, no deleted branch, no file written, no request sent to GitHub or GitLab.
+
+```bash
+gtide save -m "feat: add login" --dry-run
+gtide push --dry-run
+gtide pr --yes --dry-run
+gtide branch delete --merged --dry-run
+gtide init --dry-run
+```
+
+```text
+$ gtide save -m "feat: add login" --dry-run
+→ dry run: nothing will be changed
+Dry run: nothing was changed. It would:
+  1. git add --all
+  2. git commit -m feat: add login
+```
+
+- **The checks are real.** Reading from Git and from the provider still happens, and so do Tide's own rules: a protected branch, a message that is not a Conventional Commit, a secret in the staged lines, uncommitted work in the way. If the command would be refused, `--dry-run` is refused the same way, with the same message and exit code, and says so.
+- **Questions are skipped.** A `[y/N]` question is answered yes without asking, since nothing will happen, and a prompt for free text takes its default.
+- **Staging is simulated** on a throwaway copy of the index, so the commit that follows sees the files that `git add` would have staged. Your real index is never touched.
+- **A plan can end early.** A step that needs the result of an earlier one (the pull request after a push, anything after a `git init` or a `clone`) cannot be checked: the list stops there with `Stopped here: ...` and the exit code is `0`. What was listed up to then is still what would run first.
+- **Reading commands** (`status`, `diff`, `branch`, `history`, `doctor`, `security`...) accept the flag and print their usual output.
+- **With `--json`** the document of the action has a `dry_run` object: `would` (the steps, in order) and, when the list stopped early, `stopped` (why). See [docs/json.md](docs/json.md#dry-run---dry-run).
+- It is a preview, not a promise: the repository or the remote can change between the preview and the real run, and the steps are the commands Tide would run, not a script to copy.
 
 ## What the hooks do
 

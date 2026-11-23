@@ -178,6 +178,34 @@ func Install(dir string) ([]Change, error) {
 	return changes, nil
 }
 
+// Plan reports what Install would do in dir, writing nothing.
+func Plan(dir string) ([]Change, error) {
+	var changes []Change
+	for _, h := range Managed {
+		path := filepath.Join(dir, h.Name)
+		data, err := os.ReadFile(path)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			changes = append(changes, Change{h.Name, Installed})
+		case err != nil:
+			return changes, fmt.Errorf("read %s: %w", path, err)
+		case isTideHook(data):
+			if bytes.Equal(data, Script(h)) {
+				changes = append(changes, Change{h.Name, Unchanged})
+			} else {
+				changes = append(changes, Change{h.Name, Updated})
+			}
+		default:
+			chain := path + ChainSuffix
+			if _, err := os.Lstat(chain); err == nil {
+				return changes, fmt.Errorf("cannot preserve existing %s hook: %s already exists; resolve it manually", h.Name, filepath.Base(chain))
+			}
+			changes = append(changes, Change{h.Name, Chained})
+		}
+	}
+	return changes, nil
+}
+
 func writeAtomic(path string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
 	if err != nil {

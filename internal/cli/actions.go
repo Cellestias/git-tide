@@ -25,6 +25,15 @@ type actionDoc struct {
 	Head   string `json:"head"`   // full hash of HEAD afterwards
 	// Details holds what is specific to the command; see docs/json.md.
 	Details any `json:"details"`
+	// DryRun is set by --dry-run: nothing was changed, and it lists what would have been.
+	DryRun *dryInfo `json:"dry_run,omitempty"`
+}
+
+// dryInfo is what a --dry-run reports: the steps that would have run, in order,
+// and, when a step depends on an earlier one that was not made, why the list stops.
+type dryInfo struct {
+	Would   []string `json:"would"`
+	Stopped string   `json:"stopped,omitempty"`
 }
 
 // act runs an action. Without --json it is just run. With it, the human log
@@ -51,6 +60,9 @@ func (e *env) act(ctx context.Context, repo *repository.Repository, asJSON bool,
 		if d := details(); d != nil {
 			doc.Details = d
 		}
+	}
+	if e.plan != nil {
+		doc.DryRun = &dryInfo{Would: e.plan.Steps()}
 	}
 	if err := e.p.JSON(doc); err != nil {
 		return apperr.Wrap(apperr.CodeGeneral, "cannot write JSON", "", err)

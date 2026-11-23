@@ -13,6 +13,7 @@ import (
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/config"
 	"github.com/cellestias/git-tide/internal/domain/branch"
+	"github.com/cellestias/git-tide/internal/dryrun"
 	"github.com/cellestias/git-tide/internal/git/hooks"
 	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/provider"
@@ -123,6 +124,7 @@ secrets:
 // Run writes .tide.yml and secret.tide.yml (never overwriting an existing one),
 // makes sure secret.tide.yml is git-ignored and, when enabled, installs hooks.
 func Run(ctx context.Context, repo *repository.Repository, opts Options) (Result, error) {
+	plan := dryrun.From(ctx)
 	res := Result{
 		ConfigPath: filepath.Join(repo.Root, config.FileName),
 		SecretPath: filepath.Join(repo.Root, config.SecretFileName),
@@ -166,7 +168,9 @@ func Run(ctx context.Context, repo *repository.Repository, opts Options) (Result
 		}
 		res.Base, res.Provider = base, chosen
 		//nolint:gosec // .tide.yml is a committed project file and must be readable by the team
-		if err := createExclusive(res.ConfigPath, fmt.Sprintf(configTemplate, base, chosen), 0o644); err != nil {
+		if plan != nil {
+			plan.Add("create " + res.ConfigPath)
+		} else if err := createExclusive(res.ConfigPath, fmt.Sprintf(configTemplate, base, chosen), 0o644); err != nil {
 			return res, err
 		}
 		res.ConfigCreated = true
@@ -177,7 +181,7 @@ func Run(ctx context.Context, repo *repository.Repository, opts Options) (Result
 		return res, err
 	}
 	res.SecretCreated = created
-	res.IgnoreCreated, res.IgnoreUpdated, err = ensureIgnored(filepath.Join(repo.Root, ".gitignore"), config.SecretFileName)
+	res.IgnoreCreated, res.IgnoreUpdated, err = ensureIgnored(plan, filepath.Join(repo.Root, ".gitignore"), config.SecretFileName)
 	if err != nil {
 		return res, err
 	}
@@ -191,7 +195,17 @@ func Run(ctx context.Context, repo *repository.Repository, opts Options) (Result
 		return res, apperr.Wrap(apperr.CodeExternal, "cannot locate hooks directory", "", err)
 	}
 	res.HooksDir = dir
-	changes, err := hooks.Install(dir)
+	var changes []hooks.Change
+	if plan != nil {
+		changes, err = hooks.Plan(dir)
+		for _, c := range changes {
+			if c.Action != hooks.Unchanged {
+				plan.Add("hook " + c.Describe())
+			}
+		}
+	} else {
+		changes, err = hooks.Install(dir)
+	}
 	res.HookChanges = changes
 	if err != nil {
 		return res, apperr.Wrap(apperr.CodeGeneral, "hook installation failed", "existing hooks were left in place", err)
@@ -252,6 +266,10 @@ func ensureSecretFile(ctx context.Context, repo *repository.Repository, path, pr
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, apperr.Wrap(apperr.CodeGeneral, "cannot inspect "+path, "", err)
 	}
+	if plan := dryrun.From(ctx); plan != nil {
+		plan.Add("create " + path)
+		return true, nil
+	}
 	if err := createExclusive(path, fmt.Sprintf(secretTemplate, tokenVar(ctx, repo, providerName), renderCatalog()), 0o600); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return false, nil
@@ -284,10 +302,14 @@ func tokenVar(ctx context.Context, repo *repository.Repository, providerName str
 // ensureIgnored makes sure entry is a line of the .gitignore at path. It creates
 // the file when missing, appends the entry otherwise, keeps every existing line,
 // and never duplicates the rule (a leading "/" form counts as present).
-func ensureIgnored(path, entry string) (created, updated bool, err error) {
+func ensureIgnored(plan *dryrun.Plan, path, entry string) (created, updated bool, err error) {
 	fi, err := os.Lstat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
+		if plan != nil {
+			plan.Add("create " + path)
+			return true, false, nil
+		}
 		if err := createExclusive(path, entry+"\n", 0o644); err != nil { //nolint:gosec // .gitignore is a committed project file
 			return false, false, err
 		}
@@ -310,6 +332,10 @@ func ensureIgnored(path, entry string) (created, updated bool, err error) {
 	add := entry + "\n"
 	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
 		add = "\n" + add
+	}
+	if plan != nil {
+		plan.Add("add " + entry + " to " + path)
+		return false, true, nil
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0) //nolint:gosec // fixed path under the repository root
 	if err != nil {

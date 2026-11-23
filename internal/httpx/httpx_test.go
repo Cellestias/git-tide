@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cellestias/git-tide/internal/dryrun"
 )
 
 // fast returns a policy that never really sleeps and records the waits.
@@ -366,5 +368,29 @@ func TestPagerPassesFetchErrorsThrough(t *testing.T) {
 	p := Pager{Label: "Acme", PageSize: 5, MaxPages: 2, Get: func(context.Context, string) ([]byte, error) { return nil, boom }}
 	if _, err := p.Each(context.Background(), "http://x", func([]json.RawMessage) error { return nil }); !errors.Is(err, boom) {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestDryRunSendsNoWrite(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(`{"read":true}`))
+	}))
+	defer srv.Close()
+	plan := &dryrun.Plan{}
+	ctx := dryrun.With(context.Background(), plan)
+
+	resp, err := Do(ctx, srv.Client(), Request{Method: http.MethodGet, URL: srv.URL}, Policy{})
+	if err != nil || hits != 1 || !strings.Contains(string(resp.Body), "read") {
+		t.Fatalf("a GET must still go out: %+v %v hits=%d", resp, err, hits)
+	}
+	resp, err = Do(ctx, srv.Client(), Request{Method: http.MethodPost, URL: srv.URL + "/pulls?access_token=SECRET", Payload: []byte("{}")}, Policy{})
+	if err != nil || hits != 1 || resp.Status != 200 {
+		t.Fatalf("a POST must not go out: %+v %v hits=%d", resp, err, hits)
+	}
+	steps := plan.Steps()
+	if len(steps) != 1 || !strings.HasPrefix(steps[0], "POST ") || strings.Contains(steps[0], "SECRET") {
+		t.Errorf("steps = %v", steps)
 	}
 }

@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/cellestias/git-tide/internal/dryrun"
 )
 
 // maxBody caps how much of a response is read.
@@ -107,6 +109,12 @@ func sleep(ctx context.Context, d time.Duration) error {
 // create the pull request twice. The returned error never contains the URL, so
 // it cannot leak a token that travels in a query string.
 func Do(ctx context.Context, hc *http.Client, req Request, pol Policy) (Response, error) {
+	if plan := dryrun.From(ctx); plan != nil && req.Method != http.MethodGet && req.Method != http.MethodHead {
+		// A dry run reads from the provider but never writes to it. The call is
+		// recorded and answered with an empty success, so the use case goes on.
+		plan.Add(req.Method + " " + redactURL(req.URL))
+		return Response{Status: http.StatusOK, Body: []byte("{}")}, nil
+	}
 	pol = pol.normalized()
 	attempts := pol.Attempts
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
@@ -218,4 +226,14 @@ func redact(err error) error {
 		return ue.Err
 	}
 	return err
+}
+
+// redactURL is the URL without its query string or credentials, which can hold a token.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "(unreadable address)"
+	}
+	u.User, u.RawQuery, u.Fragment = nil, "", ""
+	return u.String()
 }

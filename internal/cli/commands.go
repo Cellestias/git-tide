@@ -90,6 +90,10 @@ func (e *env) createRepo(ctx context.Context, name string, yes bool, p output.Pr
 	if home, err := os.UserHomeDir(); err == nil && filepath.Clean(e.dir) == filepath.Clean(home) || filepath.Dir(e.dir) == e.dir {
 		return nil, apperr.New(apperr.CodeUnsafeRepo, "refusing to create a Git repository in "+e.dir, "go into a project folder first")
 	}
+	if e.plan != nil {
+		e.plan.Add(fmt.Sprintf("git init (first branch %s) in %s", name, e.dir))
+		return nil, errors.New("this folder has no repository yet, so what init would do after creating it cannot be planned")
+	}
 	if !yes {
 		ok, err := e.confirm(fmt.Sprintf("No Git repository in %s. Create one with branch %q? [y/N] ", e.dir, name))
 		if err != nil {
@@ -174,6 +178,9 @@ func (e *env) cloneCmd() *cobra.Command {
 				p.Step("Cloning %s", executor.Redact(args[0]))
 				var err error
 				res, err = appclone.Run(ctx, e.ex, e.dir, args[0], target, opts)
+				if err != nil && e.plan != nil && e.plan.Len() > 0 {
+					err = errors.New("the copy does not exist in a dry run, so gtide init in it cannot be planned")
+				}
 				if res.Dir != "" {
 					p.Success("cloned into %s", res.Dir)
 				}
