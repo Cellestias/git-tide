@@ -16,6 +16,8 @@ import (
 type Command struct {
 	Args []string
 	Dir  string
+	// Env adds variables to the environment of this one invocation ("NAME=value").
+	Env []string
 }
 
 type Result struct {
@@ -57,7 +59,7 @@ func (x Exec) Run(ctx context.Context, c Command) (Result, error) {
 	cmd.Dir = c.Dir
 	// Keep output parseable regardless of the user's locale; never block
 	// background commands on an optional index lock.
-	cmd.Env = append(os.Environ(), "LC_ALL=C", "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(append(os.Environ(), "LC_ALL=C", "GIT_OPTIONAL_LOCKS=0"), c.Env...)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
