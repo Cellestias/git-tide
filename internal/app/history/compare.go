@@ -12,8 +12,9 @@ import (
 	"github.com/cellestias/git-tide/internal/output"
 )
 
-// MaxCompareCommits bounds the commits simulated: each one costs a merge.
-const MaxCompareCommits = 300
+// MaxCompareCommits bounds the commits simulated: each one costs a merge and a
+// throwaway commit, about 30 ms together, so the limit is about a minute.
+const MaxCompareCommits = 2000
 
 // Pick statuses.
 const (
