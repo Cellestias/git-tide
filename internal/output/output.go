@@ -20,6 +20,9 @@ type Printer struct {
 
 	ColorOut bool
 	ColorErr bool
+
+	// DryRun marks the success lines with a hollow circle: what they describe was not done.
+	DryRun bool
 }
 
 // ColorEnabled reports whether w should receive colours: it must be a
@@ -70,6 +73,10 @@ func (p Printer) Info(format string, args ...any) {
 }
 
 func (p Printer) Success(format string, args ...any) {
+	if p.DryRun {
+		p.line(p.Out, paint(p.ColorOut, "2", "○"), format, args)
+		return
+	}
 	p.line(p.Out, paint(p.ColorOut, "32", "✓"), format, args)
 }
 

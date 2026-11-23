@@ -16,6 +16,7 @@ import (
 	"github.com/cellestias/git-tide/internal/apperr"
 	"github.com/cellestias/git-tide/internal/config"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
+	"github.com/cellestias/git-tide/internal/dryrun"
 	"github.com/cellestias/git-tide/internal/git/executor"
 	"github.com/cellestias/git-tide/internal/git/repository"
 	"github.com/cellestias/git-tide/internal/output"
@@ -31,6 +32,12 @@ type env struct {
 	dir string
 
 	reader *bufio.Reader // shared by every prompt so buffered input is not lost
+
+	dry      bool         // --dry-run
+	plan     *dryrun.Plan // what a dry run would do; nil in a real run
+	dryJSON  bool         // the command was given --json
+	dryName  string       // the command that is running, for the document of a dry run
+	dryClose func()       // removes what the dry run left in the temporary folder
 }
 
 // Execute runs the CLI and returns the process exit code.
@@ -54,6 +61,9 @@ func (e *env) run(ctx context.Context, args []string, out, errOut io.Writer) int
 	root.SetOut(out)
 	root.SetErr(errOut)
 	err := root.ExecuteContext(ctx)
+	if e.plan != nil {
+		return e.finishDry(err, errOut)
+	}
 	if err == nil {
 		return apperr.CodeOK
 	}
@@ -79,6 +89,23 @@ func (e *env) rootCmd() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE:          func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	}
+	root.PersistentFlags().BoolVar(&e.dry, "dry-run", false, "show what the command would do and change nothing")
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if !e.dry {
+			return nil
+		}
+		e.plan = &dryrun.Plan{}
+		e.p.DryRun = true
+		e.p.Note("dry run: nothing will be changed")
+		dry := executor.NewDryRun(e.ex, e.plan)
+		e.ex, e.dryClose = dry, dry.Close
+		cmd.SetContext(dryrun.With(cmd.Context(), e.plan))
+		if f := cmd.Flags().Lookup("json"); f != nil && f.Value.String() == "true" {
+			e.dryJSON = true
+		}
+		e.dryName = strings.TrimPrefix(cmd.CommandPath(), "gtide ")
+		return nil
 	}
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return apperr.Usage("%v", err) })
 	root.AddCommand(e.initCmd(), e.cloneCmd(), e.remoteCmd(), e.branchCmd(), e.changeCmd(), e.createCmd(), e.commitCmd(), e.historyCmd(), e.saveCmd(), e.statusCmd(), e.diffCmd(), e.pullCmd(), e.stashCmd(), e.tagCmd(), e.undoCmd(), e.amendCmd(), e.pushCmd(), e.updateCmd(), e.continueCmd(), e.abortCmd(), e.reviewCmd(), e.prCmd(), e.securityCmd(), e.secretsCmd(), e.doctorCmd(), e.configCmd(), e.hookCmd())
@@ -147,6 +174,10 @@ func (e *env) lines() *bufio.Reader {
 // confirm asks a yes/no question on the error stream and reads the answer from
 // stdin. Anything but "y"/"yes" (including EOF) is a no.
 func (e *env) confirm(prompt string) (bool, error) {
+	if e.plan != nil { // a dry run changes nothing, so there is nothing to confirm
+		_, _ = fmt.Fprintln(e.p.Err, prompt+"(dry run: yes)")
+		return true, nil
+	}
 	line, err := e.ask(prompt)
 	if err != nil {
 		return false, err
@@ -161,6 +192,9 @@ func (e *env) confirm(prompt string) (bool, error) {
 // ask prints prompt on the error stream and returns one line of stdin, without
 // the line ending. EOF yields what was read, so an empty answer.
 func (e *env) ask(prompt string) (string, error) {
+	if e.plan != nil { // the default answer
+		return "", nil
+	}
 	_, _ = fmt.Fprint(e.p.Err, prompt)
 	line, err := e.lines().ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
