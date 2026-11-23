@@ -561,6 +561,7 @@ gtide pr list                          # open requests
 gtide pr list --state merged           # open, closed, merged or all
 gtide pr list --author me --limit 50   # `me` is the owner of the provider token
 gtide pr list --assignee alice
+gtide pr list --reviewer me             # still waiting for your review
 ```
 
 `--limit` defaults to 20 (maximum 100). Open drafts show as `open (draft)`. Public repositories need no token; `--author me` and `--assignee me` do, because Tide has to ask the provider who you are. On GitHub the author and assignee filters are applied by Tide after fetching, so on a very large repository a narrow filter can scan up to 1000 requests before it fills the limit.
@@ -574,6 +575,28 @@ gtide pr view 42
 ```
 
 Review status is one of `approved by ...`, `changes requested by ...`, or `review required`, followed by `waiting on ...` for reviewers still requested. GitLab's REST API has no "changes requested" state, so there the status is `approved` or `review required`, and GitLab reports no per-file line counts. The description, files and commits are capped (lists show "… and N more"). When one of the extra lookups fails, Tide prints a warning and shows the rest.
+
+### `gtide pr diff`, `comments`, `comment`, `approve`, `request-changes`, `commit`, `edit`, `options`
+
+Read and take part in a review without leaving the terminal (GitHub; GitLab is next).
+
+```bash
+gtide pr diff 42                          # the patch, as the provider sees it (no checkout)
+gtide pr diff 42 --file src/auth.go       # one file
+gtide pr comments 42                      # the discussion, the comments on lines and the reviews
+gtide pr comment 42 --body "Thanks!"
+gtide pr comment 42 --file src/auth.go --line 31 --body "Why not reuse parse()?"
+gtide pr comment 42 --file src/auth.go --reply-to 123456 --body "Fixed"
+gtide pr approve 42
+gtide pr request-changes 42 --body "The token is logged in plain text"
+gtide pr list --reviewer me               # what waits for your review
+gtide pr commit 42 1a2b3c4                # one commit of the request: who, when, and its files
+gtide pr options                          # the labels and the people you can choose from
+gtide pr edit 42 --add-reviewer alice,bob --add-label bug --add-assignee carol
+gtide pr edit 42 --remove-reviewer bob
+```
+
+A comment on a line goes on the newest commit of the request (`--side left` is the old version of the file). The commands that write need the token with write access; you cannot approve your own request on GitHub. Each has `--json`; see [docs/json.md](docs/json.md).
 
 ### `gtide pr status`
 

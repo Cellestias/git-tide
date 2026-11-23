@@ -15,23 +15,54 @@ const maxJSONBody = 20000
 
 // jsonRequest is a pull or merge request, the same in the list, the status and the view.
 type jsonRequest struct {
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	State     string    `json:"state"` // "open", "closed" or "merged"
-	Draft     bool      `json:"draft"`
-	URL       string    `json:"url"`
-	Author    string    `json:"author"`
-	Assignees []string  `json:"assignees"`
-	Requested []string  `json:"requested_reviewers"` // reviews still asked for
-	Head      string    `json:"head"`                // the source branch
-	Base      string    `json:"base"`                // the target branch
-	HeadRepo  string    `json:"head_repo"`           // "owner/name" of the source; empty if unknown or deleted
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Number    int         `json:"number"`
+	Title     string      `json:"title"`
+	State     string      `json:"state"` // "open", "closed" or "merged"
+	Draft     bool        `json:"draft"`
+	URL       string      `json:"url"`
+	Author    string      `json:"author"`
+	Assignees []string    `json:"assignees"`
+	Requested []string    `json:"requested_reviewers"` // reviews still asked for
+	Labels    []jsonLabel `json:"labels"`
+	Head      string      `json:"head"`      // the source branch
+	Base      string      `json:"base"`      // the target branch
+	HeadRepo  string      `json:"head_repo"` // "owner/name" of the source; empty if unknown or deleted
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+// jsonLabel is a tag on a request. Color is six hex digits.
+type jsonLabel struct {
+	Name        string `json:"name"`
+	Color       string `json:"color"`
+	Description string `json:"description"`
+}
+
+func toLabels(in []provider.Label) []jsonLabel {
+	out := make([]jsonLabel, 0, len(in))
+	for _, l := range in {
+		out = append(out, jsonLabel{Name: oneLine(l.Name), Color: hexColor(l.Color), Description: oneLine(l.Description)})
+	}
+	return out
+}
+
+// hexColor keeps a label colour to what a style can safely hold: six hex digits, or nothing.
+func hexColor(s string) string {
+	s = strings.TrimPrefix(s, "#")
+	if len(s) != 6 {
+		return ""
+	}
+	for _, r := range s {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
+			return ""
+		}
+	}
+	return s
 }
 
 func toRequest(x provider.PullRequest) jsonRequest {
 	return jsonRequest{
+		Labels: toLabels(x.Labels),
 		Number: x.Number, Title: oneLine(x.Title), State: x.State, Draft: x.Draft, URL: x.URL, Author: x.Author,
 		Assignees: nonNil(x.Assignees), Requested: nonNil(x.Reviewers), Head: x.HeadRef, Base: x.BaseRef, HeadRepo: x.HeadRepo,
 		CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt,
@@ -97,9 +128,11 @@ type jsonFile struct {
 type jsonCommit struct {
 	SHA     string `json:"sha"`
 	Subject string `json:"subject"`
+	Author  string `json:"author"`
+	Date    string `json:"date"` // RFC 3339, empty when unknown
 }
 
-func writeView(p output.Printer, c provider.Provider, hosted provider.Repo, x provider.PullRequest, review *provider.Review,
+func writeView(p output.Printer, c provider.Provider, hosted provider.Repo, viewer string, x provider.PullRequest, review *provider.Review,
 	files []provider.ChangedFile, filesCut bool, commits []provider.CommitSummary, commitsCut bool, warnings []string) error {
 	body, cut := bodyText(x.Body)
 	doc := struct {
@@ -107,7 +140,8 @@ func writeView(p output.Printer, c provider.Provider, hosted provider.Repo, x pr
 		Provider         string       `json:"provider"`
 		Noun             string       `json:"noun"`
 		Repo             string       `json:"repo"`
-		Fork             bool         `json:"fork"` // the source is another repository
+		Fork             bool         `json:"fork"`   // the source is another repository
+		Viewer           string       `json:"viewer"` // the login of the token's owner; empty without a token
 		Body             string       `json:"body"`
 		BodyTruncated    bool         `json:"body_truncated"`
 		Review           *jsonReview  `json:"review"`
@@ -117,7 +151,7 @@ func writeView(p output.Printer, c provider.Provider, hosted provider.Repo, x pr
 		CommitsTruncated bool         `json:"commits_truncated"`
 		Warnings         []string     `json:"warnings"`
 	}{
-		jsonRequest: toRequest(x), Provider: c.Name(), Noun: c.Noun(), Repo: hosted.String(),
+		jsonRequest: toRequest(x), Provider: c.Name(), Noun: c.Noun(), Repo: hosted.String(), Viewer: oneLine(viewer),
 		Fork: x.HeadRepo != "" && !strings.EqualFold(x.HeadRepo, hosted.String()),
 		Body: body, BodyTruncated: cut, Files: []jsonFile{}, FilesTruncated: filesCut, Commits: []jsonCommit{}, CommitsTruncated: commitsCut,
 		Warnings: nonNil(warnings),
@@ -130,7 +164,11 @@ func writeView(p output.Printer, c provider.Provider, hosted provider.Repo, x pr
 		doc.Files = append(doc.Files, jsonFile{f.Path, f.OldPath, f.Status, f.Additions, f.Deletions, f.HasStats})
 	}
 	for _, cm := range commits {
-		doc.Commits = append(doc.Commits, jsonCommit{cm.SHA, oneLine(cm.Subject)})
+		date := ""
+		if !cm.Date.IsZero() {
+			date = cm.Date.UTC().Format("2006-01-02T15:04:05Z")
+		}
+		doc.Commits = append(doc.Commits, jsonCommit{cm.SHA, oneLine(cm.Subject), oneLine(cm.Author), date})
 	}
 	return encode(p, doc)
 }

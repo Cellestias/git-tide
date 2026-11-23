@@ -169,8 +169,13 @@ func (c *Client) pullsURL(repo Repo) string {
 // do performs a request and maps error statuses to errors that never contain
 // the token or the request URL.
 func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte) ([]byte, error) {
+	return c.doAccept(ctx, method, endpoint, payload, "application/vnd.github+json")
+}
+
+// doAccept is do with another media type asked for, such as the raw diff.
+func (c *Client) doAccept(ctx context.Context, method, endpoint string, payload []byte, accept string) ([]byte, error) {
 	hdr := map[string]string{
-		"Accept":               "application/vnd.github+json",
+		"Accept":               accept,
 		"X-GitHub-Api-Version": "2022-11-28",
 		"User-Agent":           "git-tide",
 	}
@@ -208,17 +213,23 @@ func (c *Client) do(ctx context.Context, method, endpoint string, payload []byte
 func validationMessage(body []byte) string {
 	var v struct {
 		Message string `json:"message"`
-		Errors  []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
+		// each error is an object with a message, or just a text (a review that cannot be made says why this way)
+		Errors []json.RawMessage `json:"errors"`
 	}
 	if json.Unmarshal(body, &v) != nil || v.Message == "" {
 		return "validation failed"
 	}
 	parts := []string{v.Message}
-	for _, e := range v.Errors {
-		if e.Message != "" {
-			parts = append(parts, e.Message)
+	for _, raw := range v.Errors {
+		var text string
+		var obj struct {
+			Message string `json:"message"`
+		}
+		switch {
+		case json.Unmarshal(raw, &text) == nil && text != "":
+			parts = append(parts, text)
+		case json.Unmarshal(raw, &obj) == nil && obj.Message != "":
+			parts = append(parts, obj.Message)
 		}
 	}
 	return strings.Join(parts, ": ")
@@ -244,8 +255,14 @@ func decodePullRequest(body []byte) (PullRequest, error) {
 		RequestedReviewers []struct {
 			Login string `json:"login"`
 		} `json:"requested_reviewers"`
+		Labels []struct {
+			Name        string `json:"name"`
+			Color       string `json:"color"`
+			Description string `json:"description"`
+		} `json:"labels"`
 		Head struct {
 			Ref  string `json:"ref"`
+			SHA  string `json:"sha"`
 			Repo *struct {
 				FullName string `json:"full_name"`
 			} `json:"repo"`
@@ -266,6 +283,7 @@ func decodePullRequest(body []byte) (PullRequest, error) {
 		URL:       raw.HTMLURL,
 		Author:    raw.User.Login,
 		HeadRef:   raw.Head.Ref,
+		HeadSHA:   raw.Head.SHA,
 		BaseRef:   raw.Base.Ref,
 		CreatedAt: raw.CreatedAt,
 		UpdatedAt: raw.UpdatedAt,
@@ -278,6 +296,9 @@ func decodePullRequest(body []byte) (PullRequest, error) {
 	}
 	for _, r := range raw.RequestedReviewers {
 		pr.Reviewers = append(pr.Reviewers, r.Login)
+	}
+	for _, l := range raw.Labels {
+		pr.Labels = append(pr.Labels, provider.Label{Name: l.Name, Color: l.Color, Description: l.Description})
 	}
 	if raw.Head.Repo != nil {
 		pr.HeadRepo = raw.Head.Repo.FullName
@@ -439,15 +460,26 @@ func (c *Client) Commits(ctx context.Context, repo Repo, number int) (commits []
 	truncated, err = c.eachItem(ctx, fmt.Sprintf("%s/%d/commits", c.pullsURL(repo), number), func(raw json.RawMessage) error {
 		var cm struct {
 			SHA    string `json:"sha"`
+			Author *struct {
+				Login string `json:"login"`
+			} `json:"author"`
 			Commit struct {
 				Message string `json:"message"`
+				Author  struct {
+					Name string    `json:"name"`
+					Date time.Time `json:"date"`
+				} `json:"author"`
 			} `json:"commit"`
 		}
 		if err := json.Unmarshal(raw, &cm); err != nil {
 			return err
 		}
 		subject, _, _ := strings.Cut(cm.Commit.Message, "\n")
-		commits = append(commits, CommitSummary{SHA: cm.SHA, Subject: strings.TrimSpace(subject)})
+		author := cm.Commit.Author.Name
+		if cm.Author != nil && cm.Author.Login != "" {
+			author = cm.Author.Login
+		}
+		commits = append(commits, CommitSummary{SHA: cm.SHA, Subject: strings.TrimSpace(subject), Author: author, Date: cm.Commit.Author.Date})
 		return nil
 	})
 	return commits, truncated, err

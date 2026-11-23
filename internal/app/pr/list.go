@@ -2,6 +2,7 @@ package pr
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cellestias/git-tide/internal/apperr"
 	domain "github.com/cellestias/git-tide/internal/domain/config"
@@ -22,6 +23,7 @@ type ListOptions struct {
 	State    string // open (default), closed, merged or all
 	Author   string // login, or "me"
 	Assignee string // login, or "me"
+	Reviewer string // login, or "me": requests that still wait for this person's review
 	Limit    int    // 0 means DefaultListLimit
 	JSON     bool   // print the requests as a JSON array on stdout
 }
@@ -55,10 +57,34 @@ func List(ctx context.Context, repo *repository.Repository, cfg domain.Config, c
 		return err
 	}
 
+	reviewer, err := resolveUser(ctx, c, "--reviewer", opts.Reviewer)
+	if err != nil {
+		return err
+	}
+
 	p.Note("Querying %s for %s", providerLabel(c), hosted)
-	prs, truncated, err := c.ListPullRequests(ctx, hosted, provider.ListOptions{State: state, Author: author, Assignee: assignee, Limit: limit})
+	asked := limit
+	if reviewer != "" {
+		asked = 0 // the review requests are told apart here, so the provider's whole page is read first
+	}
+	prs, truncated, err := c.ListPullRequests(ctx, hosted, provider.ListOptions{State: state, Author: author, Assignee: assignee, Limit: asked})
 	if err != nil {
 		return readError(err, c, hosted, c.Noun()+" list")
+	}
+	if reviewer != "" {
+		var waiting []provider.PullRequest
+		for _, x := range prs {
+			for _, r := range x.Reviewers {
+				if strings.EqualFold(r, reviewer) {
+					waiting = append(waiting, x)
+					break
+				}
+			}
+		}
+		prs = waiting
+		if len(prs) > limit {
+			prs = prs[:limit]
+		}
 	}
 	if truncated {
 		p.Warn("%s list truncated; narrow it with --state, --author or --assignee", c.Noun())

@@ -73,7 +73,11 @@ func View(ctx context.Context, repo *repository.Repository, cfg domain.Config, c
 		if cerr != nil {
 			commits = nil
 		}
-		return writeView(p, c, hosted, x, rv, files, ftrunc, commits, ctrunc, warnings)
+		viewer := ""
+		if c.HasToken() {
+			viewer, _ = c.CurrentUser(ctx) // best effort: the page only uses it to tell your own request
+		}
+		return writeView(p, c, hosted, viewer, x, rv, files, ftrunc, commits, ctrunc, warnings)
 	}
 
 	p.Line("%s %s", p.Bold(ref(c, x.Number)), p.Bold(clean(x.Title)))
