@@ -13,10 +13,27 @@ import (
 	"github.com/cellestias/git-tide/internal/testutil"
 )
 
+// postLog is what the fake API was sent, safe to read while the server handles requests.
+type postLog struct {
+	mu   sync.Mutex
+	list []string
+}
+
+func (p *postLog) add(s string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.list = append(p.list, s)
+}
+
+func (p *postLog) all() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.list...)
+}
+
 // fakeGitHubReview serves one pull request with a diff, comments and the endpoints that take part in a review.
-func fakeGitHubReview(t *testing.T, posted *[]string) *httptest.Server {
+func fakeGitHubReview(t *testing.T, posted *postLog) *httptest.Server {
 	t.Helper()
-	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
@@ -24,9 +41,7 @@ func fakeGitHubReview(t *testing.T, posted *[]string) *httptest.Server {
 		  "requested_reviewers":[{"login":"me-reviewer"}],"head":{"ref":"feature/login","sha":"deadbeefcafe","repo":{"full_name":"acme/tool"}},"base":{"ref":"main"}}`
 		key := r.Method + " " + r.URL.Path
 		if r.Method == http.MethodPost || r.Method == http.MethodDelete {
-			mu.Lock()
-			*posted = append(*posted, key+" "+string(body))
-			mu.Unlock()
+			posted.add(key + " " + string(body))
 		}
 		switch key {
 		case "GET /user":
@@ -76,8 +91,8 @@ func fakeGitHubReview(t *testing.T, posted *[]string) *httptest.Server {
 }
 
 func TestReviewCommandsEndToEnd(t *testing.T) {
-	var posted []string
-	srv := fakeGitHubReview(t, &posted)
+	posted := &postLog{}
+	srv := fakeGitHubReview(t, posted)
 	env := []string{"TIDE_GITHUB_API_URL=" + srv.URL, "GITHUB_TOKEN=test-token", "GH_TOKEN="}
 	dir, bare := testutil.NewRepoWithRemote(t)
 	testutil.Run(t, dir, "remote", "set-url", "origin", "https://github.com/acme/tool.git")
@@ -138,7 +153,7 @@ func TestReviewCommandsEndToEnd(t *testing.T) {
 	if r.Details["decision"] != "request_changes" {
 		t.Errorf("request-changes = %+v", r)
 	}
-	all := strings.Join(posted, "\n")
+	all := strings.Join(posted.all(), "\n")
 	for _, want := range []string{
 		`POST /repos/acme/tool/issues/7/comments {"body":"thanks"}`,
 		`"commit_id":"deadbeefcafe"`, `"line":2`, `"path":"a.go"`, `"side":"LEFT"`,
@@ -170,7 +185,7 @@ func TestReviewCommandsEndToEnd(t *testing.T) {
 	if r.Details["added_reviewers"].([]any)[1] != "bo" || r.Details["removed_reviewers"].([]any)[0] != "cy" || r.Details["added_labels"].([]any)[0] != "bug" {
 		t.Errorf("edit = %+v", r)
 	}
-	all = strings.Join(posted, "\n")
+	all = strings.Join(posted.all(), "\n")
 	for _, want := range []string{
 		`POST /repos/acme/tool/pulls/7/requested_reviewers {"reviewers":["ana","bo"]}`,
 		`DELETE /repos/acme/tool/pulls/7/requested_reviewers {"reviewers":["cy"]}`, `POST /repos/acme/tool/issues/7/assignees {"assignees":["me-reviewer"]}`,
@@ -188,7 +203,7 @@ func TestReviewCommandsEndToEnd(t *testing.T) {
 	}
 
 	// refused before reaching the API
-	before := len(posted)
+	before := len(posted.all())
 	if _, code := stdoutWith(t, dir, env, "pr", "request-changes", "7"); code == 0 {
 		t.Error("request-changes without a reason must fail")
 	}
@@ -204,8 +219,8 @@ func TestReviewCommandsEndToEnd(t *testing.T) {
 	if _, code := stdoutWith(t, dir, env, "pr", "commit", "7", "--help-me"); code == 0 {
 		t.Error("a commit that is not a hash must fail")
 	}
-	if len(posted) != before {
-		t.Errorf("nothing may be sent when the command is refused: %v", posted[before:])
+	if len(posted.all()) != before {
+		t.Errorf("nothing may be sent when the command is refused: %v", posted.all()[before:])
 	}
 
 	// list --reviewer me: only what waits for the owner of the token
