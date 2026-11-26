@@ -39,7 +39,7 @@ Every command that reads something, and every command that changes something, ca
 | `gtide config validate --json` | object |
 | `gtide remote show --json` (or `gtide remote --json`) | object |
 
-And, for the commands that change something, `--json` on: `commit`, `save`, `amend`, `undo`, `push`, `pull`, `update`, `create`, `change`, `pr` (opening a request), `review`, `continue`, `abort`, `tag create`, `tag push`, `tag delete`, `branch delete`, `branch rename`, `stash`, `stash pop`, `stash drop`, `remote add`, `remote set-url`, `init` and `clone`. They share one envelope, described under [Actions](#actions).
+And, for the commands that change something, `--json` on: `commit`, `save`, `amend`, `undo`, `pick`, `revert`, `restore`, `fetch`, `push`, `pull`, `update`, `create`, `change`, `pr` (opening a request), `review`, `continue`, `abort`, `tag create`, `tag push`, `tag delete`, `branch delete`, `branch rename`, `stash`, `stash pop`, `stash drop`, `remote add`, `remote set-url`, `init` and `clone`. They share one envelope, described under [Actions](#actions).
 
 ### status
 
@@ -285,7 +285,7 @@ A command that changes something prints, with `--json`, **one object with the sa
 ```
 
 - `ok` is always `true`: a failure prints nothing on stdout (see the rules above). Check the exit code first.
-- `action` names the command: `commit`, `save`, `amend`, `undo`, `push`, `pull`, `update`, `create`, `change`, `pr`, `review`, `continue`, `abort`, `tag create`, `tag push`, `tag delete`, `branch delete`, `branch rename`, `stash`, `stash pop`, `stash drop`, `remote add`, `remote set-url`, `init`, `clone`.
+- `action` names the command: `commit`, `save`, `amend`, `undo`, `pick`, `revert`, `restore`, `fetch`, `push`, `pull`, `update`, `create`, `change`, `pr`, `review`, `continue`, `abort`, `tag create`, `tag push`, `tag delete`, `branch delete`, `branch rename`, `stash`, `stash pop`, `stash drop`, `remote add`, `remote set-url`, `init`, `clone`.
 - `branch` and `head` are the branch checked out and the full hash of HEAD **after** the action (`branch` is `""` when HEAD is detached, `head` is `""` in a repository with no commit).
 - `details` is read from the repository after the action, so it says what is true now. It is always an object. What it holds, per action:
 
@@ -294,6 +294,10 @@ A command that changes something prints, with `--json`, **one object with the sa
 | `commit`, `save` | `commit` (full hash), `subject`, `files` (`path`, `added`, `deleted`, `binary`) |
 | `amend` | as `commit`, plus `previous`: the hash it replaced |
 | `undo` | `undone`: `{ commit, subject }` of the commit taken back, `staged`: its files, now staged |
+| `pick` | `picked`: the commits copied (`commit` hash of the original, `subject`), `skipped`: those left alone (`commit`, `reason`) |
+| `revert` | `reverted`: the commits taken back (`commit`, `subject`) |
+| `restore` | `from` (what was asked), `staged`: the files now staged (`path`, `added`, `deleted`, `binary`) |
+| `fetch` | `remote`, `upstream` (`origin/feature/x`, absent when the branch follows nothing), `ahead`, `behind` |
 | `push` | `remote`, `upstream` (`origin/feature/x`), `forced` |
 | `pull` | `upstream`, `strategy`, `before`, `after`, `changed` |
 | `update` | `base`, `strategy`, `before`, `after`, `changed` |
@@ -353,4 +357,4 @@ With `--dry-run` a command that changes something prints the same envelope, with
 
 ## Checking the version
 
-`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `gtide security` needs **v1.8.0 or later**; `gtide secrets scan` and `gtide doctor --json` need **v1.9.0 or later**; `--json` on `pr list`, `pr view`, `pr status`, `config`, `remote show` and on every command that changes something needs **v1.10.0 or later**; `pr diff`, `pr comments`, `pr comment`, `pr approve`, `pr request-changes`, `pr commit`, `pr edit`, `pr options`, `pr list --reviewer` and the `viewer`, `labels` and commit `author`/`date` of `pr view` need **v1.11.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
+`gtide --version` prints the version (`gtide version v1.6.0`). `--json` on the commands above and `history --patch` need **v1.6.0 or later**; `--graph`, `--all-branches` and `history show --patch` need **v1.7.0 or later**; `gtide security` needs **v1.8.0 or later**; `gtide secrets scan` and `gtide doctor --json` need **v1.9.0 or later**; `--json` on `pr list`, `pr view`, `pr status`, `config`, `remote show` and on every command that changes something needs **v1.10.0 or later**; `pr diff`, `pr comments`, `pr comment`, `pr approve`, `pr request-changes`, `pr commit`, `pr edit`, `pr options`, `pr list --reviewer` and the `viewer`, `labels` and commit `author`/`date` of `pr view` need **v1.11.0 or later**; `pick`, `restore`, `revert` and `fetch` need **v1.12.0 or later**; `history --json` and `history show --json` exist since v1.4.0.
