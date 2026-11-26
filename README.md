@@ -499,7 +499,29 @@ gtide amend -m "fix(auth): reject empty token"   # reword it
 
 `undo` moves the branch to the parent of the last commit and keeps that commit's changes staged, so nothing is lost and `gtide save` can commit them again. `amend` folds the staged changes (and the files given with `-f`) into the last commit and, with `-m`, `--type`, `--scope` or `--body`, replaces its message. The message and the staged lines go through the same Conventional Commits and secret checks as `gtide save`, and a failed check restores the index.
 
-Both refuse a commit that is already on a remote branch (rewriting it would diverge from everyone who fetched it; make a new commit or use `git revert`) and a merge commit. `undo` also refuses the first commit of a repository, and `amend` a protected branch.
+Both refuse a commit that is already on a remote branch (rewriting it would diverge from everyone who fetched it; make a new commit or use `gtide revert`) and a merge commit. `undo` also refuses the first commit of a repository, and `amend` a protected branch.
+
+### `gtide pick`, `gtide restore`, `gtide revert` and `gtide fetch`
+
+Move work between branches without leaving Tide's rules behind. They need **v1.12.0 or later**.
+
+```bash
+gtide pick 1a2b3c4                                  # copy one commit onto the current branch
+gtide pick origin/staging~3..origin/staging         # copy the commits of a range, oldest first
+gtide restore --from origin/staging -f src/teams    # bring files from another ref, nothing else
+gtide revert 1a2b3c4                                # add a commit that takes one back, published or not
+gtide fetch                                         # refresh origin/*, touch nothing local
+```
+
+`pick` cherry-picks each commit as a commit of its own, keeping the author and the message. A commit is a hash, a branch or a tag, and `<from>..<to>` stands for the commits of `<to>` that `<from>` lacks. Git runs no commit hook for a cherry-pick, so Tide checks first, before anything changes: every message against the Conventional Commits rules, and every commit against the secret scan and the conflict-marker check. A commit the branch already has, even under another hash, is skipped and listed. A merge commit is refused (which parent to follow is your decision: `git cherry-pick -m 1 <sha>`).
+
+`restore` replaces the files given with `-f` (a folder takes everything under it) by their version in `--from` and stages them, so `gtide save` commits them. Nothing else of that branch comes along, which is what sets it apart from a merge. The lines brought go through the conflict-marker and secret checks of `gtide save`, and a failed check leaves the files and the index as they were. Local changes in those files are overwritten, so Tide asks first unless `--yes` is given. A file that does not exist in `--from` is refused, since `restore` never deletes: use `git rm`.
+
+`revert` adds a commit that undoes each given commit (newest first for a range). Where `gtide undo` refuses a commit that is already on the remote, `revert` is the way back: it adds to the history and does not rewrite it. The commits must be in the current branch.
+
+`pick`, `restore` and `revert` refuse a protected branch, a detached HEAD and an operation already in progress, and `pick` and `revert` also uncommitted changes. When a pick or a revert stops on conflicts, resolve them, `git add` the files and run [`gtide continue`](#gtide-continue-and-gtide-abort), or give up with `gtide abort`.
+
+`fetch` refreshes the remote-tracking branches of the configured remote (or the remote you name) and drops those whose branch is gone, then says how far the current branch is from its upstream. The work tree, the index and the local branches are not touched, so it is safe with uncommitted work; `gtide pull` is what brings the commits in.
 
 ### `gtide push`
 
@@ -942,7 +964,7 @@ Note that when a hook rejects a command, Git itself reports a failure; the Tide 
 
 ## Machine-readable output
 
-Every command that reads something takes `--json` (`status`, `diff`, `branch`, `history`, `history show`, `tag`, `stash list`, `pr list`, `pr view`, `pr status`, `security`, `secrets scan`, `doctor`, `config show`, `config validate`, `remote show`), and so does every command that changes something (`commit`, `save`, `amend`, `undo`, `push`, `pull`, `update`, `create`, `change`, `pr`, `review`, `continue`, `abort`, `tag create`/`push`/`delete`, `branch delete`/`rename`, `stash`/`pop`/`drop`, `remote add`/`set-url`, `init`, `clone`).
+Every command that reads something takes `--json` (`status`, `diff`, `branch`, `history`, `history show`, `tag`, `stash list`, `pr list`, `pr view`, `pr status`, `security`, `secrets scan`, `doctor`, `config show`, `config validate`, `remote show`), and so does every command that changes something (`commit`, `save`, `amend`, `undo`, `pick`, `revert`, `restore`, `fetch`, `push`, `pull`, `update`, `create`, `change`, `pr`, `review`, `continue`, `abort`, `tag create`/`push`/`delete`, `branch delete`/`rename`, `stash`/`pop`/`drop`, `remote add`/`set-url`, `init`, `clone`).
 
 The rules are the same for all of them: **stdout holds only the JSON document**, the human log (progress, notes, warnings, the success line) goes to stderr, and an empty result is `[]` or an object, never prose. A command that changes something prints one envelope, `{ "ok", "action", "branch", "head", "details" }`, after it has worked; when it fails it prints **nothing** on stdout, and the exit code and stderr say why. Fields are only added in minor releases. The shape of each command is in [docs/json.md](docs/json.md).
 
@@ -960,8 +982,9 @@ gtide pr list --state open --json | jq '.[] | {number, title, author}'
 - **Secrets stay out of output.** Tide never prints matched values, tokens, or credentials embedded in remote URLs.
 - **Tokens.** Tide reads the provider token from the environment or `.env` (see [Authentication](#authentication)) and never stores it. `secret.tide.yml` only references a variable, and a literal token there is rejected. Do not put tokens in `.tide.yml`.
 - **Repository configuration is untrusted input.** Tide bounds file size and pattern count, uses Go's RE2 regular expressions (no catastrophic backtracking), and validates branch names before passing them to Git. Git is always run with an argument list, never through a shell.
-- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API; `branch delete --remote` pushes), `history` (`--remote` fetches), `clone` (clones), `create` (fetch, and push with `--push`), `update` and `pull` (fetch), `push` and `tag push` (push; `tag delete --remote` too), `review` (API and fetch), and `pr` (fetch, push, and API; `pr list`, `pr view` and `pr status` only call the API) touch the network, and each says so as it runs.
+- **No hidden network calls.** Only `branch` (`--remote` fetches, `--hosted` calls the API; `branch delete --remote` pushes), `history` (`--remote` fetches), `clone` (clones), `create` (fetch, and push with `--push`), `update`, `pull` and `fetch` (fetch), `push` and `tag push` (push; `tag delete --remote` too), `review` (API and fetch), and `pr` (fetch, push, and API; `pr list`, `pr view` and `pr status` only call the API) touch the network, and each says so as it runs.
 - **GitHub and GitLab.** `review`, `pr` and `branch --hosted` support `github.com` and GitLab (gitlab.com or self-hosted). `TIDE_GITHUB_API_URL` and `TIDE_GITLAB_API_URL` point the API client elsewhere (HTTPS required, except loopback addresses), mainly for testing. GitHub Enterprise is not supported yet.
+- **What Tide leaves to Git.** There is no command for investigating history (`git log --graph`, `blame`, `bisect`, `merge-base`), rewriting it (`reset --hard`, `rebase -i`), submodules or worktrees. Use plain `git` for those, starting with commands that only read. `reset --hard`, `clean -fd` and `checkout -- .` destroy work: run them only when the owner of the code agrees. For what Tide does cover, prefer it even for reading (`status`, `diff`, `history`, `branch`), since the rules above live there.
 - No telemetry.
 
 ## Troubleshooting
