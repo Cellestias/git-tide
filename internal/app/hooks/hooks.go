@@ -45,7 +45,13 @@ func PreCommit(ctx context.Context, repo *repository.Repository, cfg domain.Conf
 	if err != nil {
 		return apperr.Wrap(apperr.CodeExternal, "cannot inspect staged changes", "", err)
 	}
+	return CheckAdditions(cfg, added, "staged changes")
+}
 
+// CheckAdditions rejects added lines that carry a leftover merge conflict marker
+// or, when the secret scan is on, a likely secret. where says what the lines
+// belong to ("staged changes", "commit 1a2b3c4"), for the message.
+func CheckAdditions(cfg domain.Config, added []repository.AddedLine, where string) error {
 	var markers []string
 	for _, l := range added {
 		if conflict.IsMarker(l.Text) {
@@ -53,7 +59,7 @@ func PreCommit(ctx context.Context, repo *repository.Repository, cfg domain.Conf
 		}
 	}
 	if len(markers) > 0 {
-		return apperr.New(apperr.CodePolicy, summary(fmt.Sprintf("%d merge conflict marker(s) in staged changes:", len(markers)), markers),
+		return apperr.New(apperr.CodePolicy, summary(fmt.Sprintf("%d merge conflict marker(s) in %s:", len(markers), where), markers),
 			"resolve the conflict and remove the <<<<<<< / >>>>>>> lines; if a line is meant to be there add `"+conflict.AllowMarker+"` to it")
 	}
 
@@ -70,7 +76,7 @@ func PreCommit(ctx context.Context, repo *repository.Repository, cfg domain.Conf
 	if len(findings) == 0 {
 		return nil
 	}
-	return apperr.New(apperr.CodePolicy, summary(fmt.Sprintf("%d likely secret(s) in staged changes:", len(findings)), findings),
+	return apperr.New(apperr.CodePolicy, summary(fmt.Sprintf("%d likely secret(s) in %s:", len(findings), where), findings),
 		"remove the secret from the change; for a false positive add `"+secret.AllowMarker+"` to that line")
 }
 
